@@ -1,54 +1,70 @@
-# 黄果短剧解析 · Docker 部署版
+# 🍊 黄果下载 · huangguo-down
 
-前后端分离的短剧解析站，**一键部署**，专为绿联 NAS / 群晖 / 任意 Docker 环境准备。
+自动下载黄果短剧视频到指定目录，带 WebUI 管理界面。支持增量同步、失败重试、已有视频扫描识别，SQLite 记录下载状态，生成 Emby / Jellyfin 兼容的目录结构与 NFO 元数据。
 
-- 前端 `7731`：nginx 托管静态页，并把 API 请求反代到后端
-- 后端 `7732`：Node 运行解析核心，负责 API、封面解密、HLS 代理、整集下载
-- 零 npm 依赖，镜像体积小，无需构建步骤
+**端口约定：前端 WebUI `7731`，后端 API `7732`。**
 
-> 内容来自第三方公开站点，仅供技术研究与学习。请遵守当地法律法规与版权规则。
+> 本仓库是 `colin4k/HGXZ` 的 NAS 适配分支。原版只提供了指向已失效命名空间的镜像地址（`ghcr.io/wx2cyj/hgxz`，该账号已 404，CI 也从未成功运行过），且没有为 NAS 场景做任何适配。这里补齐了构建、部署和运维所需的部分。
+
+## 一键部署（绿联 NAS）
+
+SSH 进 NAS，在仓库目录执行：
+
+```bash
+./deploy.sh
+```
+
+脚本会自动：检查 Docker → 创建数据目录 → 构建镜像 → 启动容器 → 打印访问地址。首次构建约 3-8 分钟。
+
+也可以直接用 GHCR 预构建镜像（CI 自动推送，支持 amd64/arm64）：
+
+```bash
+./deploy.sh pull && ./deploy.sh start
+```
+
+其他命令：`logs` / `status` / `restart` / `stop` / `down` / `update` / `clean`，直接跑 `./deploy.sh` 看帮助。
 
 ---
 
-## 一、快速开始
+## 端口与架构
 
-镜像已发布到 GHCR，**NAS 上不需要构建、不需要拉源码**，只要有 compose 文件即可。
+单个容器内跑两个监听器，共享同一个状态库和同步锁：
 
-### 绿联 NAS（UGREEN）
+| 端口 | 角色 | 说明 |
+|---|---|---|
+| **7731** | 前端 | 完整 WebUI，同时提供 `/api/*`（同源，无 CORS 问题） |
+| **7732** | 后端 | 纯 API，不带页面，开了 CORS 方便外部脚本或独立前端调用 |
 
-1. 打开 **Docker** → **项目** → **新建项目**
-2. 项目名称填 `huangguo`
-3. 选择「**Compose**」方式，把下面内容整段粘贴进去
-4. 点「部署」，等两个容器变为 running
-5. 浏览器访问 `http://你的NAS_IP:7731/`
+`7732` 不映射也能用——前端会走同源请求。需要给外部脚本调 API 时才暴露它。把 `HGXZ_API_PORT` 设为 `0` 或与前端相同，就只监听一个端口。
 
-```yaml
-services:
-  huangguo-web:
-    image: ghcr.io/mogvl/huangguo-down-web:latest
-    container_name: huangguo-web
-    ports: ["7731:80"]
-    environment:
-      - TZ=Asia/Shanghai
-    restart: unless-stopped
-    depends_on:
-      - huangguo-api
+---
 
-  # 后端：解析上游站点、解密封面、代理 HLS 分片、处理整集下载
-  # 不对外映射端口，只被 huangguo-web 通过容器网络调用
-  huangguo-api:
-    image: ghcr.io/mogvl/huangguo-down-api:latest
-    container_name: huangguo-api
-    environment:
-      - TZ=Asia/Shanghai
-      - PORT=7732
-      - HOST=0.0.0.0
-      # 静态页由 huangguo-web 提供，这里只跑 API
-      - SERVE_STATIC=0
-    restart: unless-stopped
-```
+## 相对原版改了什么
 
-### 任意 Linux / macOS（命令行）
+| 问题 | 原版 | 本版 |
+|---|---|---|
+| 镜像构建 | 硬编码 `ghcr.io/wx2cyj/hgxz`，跨命名空间 push 必然 403 | 推送 `ghcr.io/mogvl/huangguo-down`，多架构 + tag/sha 标签 |
+| 架构 | 只有 `linux/amd64` | `linux/amd64` + `linux/arm64`（绿联 DXP 系列有 ARM 机型） |
+| 首次启动 | 缺 `config.json` 直接崩 | entrypoint 自动从模板生成，不会 crash-loop |
+| 配置方式 | 只能改 JSON | 全部参数支持环境变量覆盖，NAS 图形界面可直接填 |
+| 健康检查 | 无 | `/healthz` + Docker `HEALTHCHECK` |
+| WebUI 鉴权 | 完全开放 | 可选 `HGXZ_WEB_TOKEN`，REST 与 WebSocket 同时生效 |
+| 僵尸进程 | PID 1 是 python | `tini` 回收 ffmpeg/openssl 子进程 |
+| 文件权限 | 只能靠 `UMASK` | 额外支持 `PUID`/`PGID`（LinuxServer 惯例） |
+| 日志目录不可写 | 直接抛异常退出 | 降级为仅内存日志，服务继续运行 |
+| 启动即同步 | 强制 | `HGXZ_SYNC_ON_START=0` 可关 |
+| 前后端端口 | 只有单个 8099 | 前端 7731 / 后端 7732 分离，后端独立 CORS |
+| 一键部署 | 手写 docker run | `./deploy.sh` 子命令覆盖日常运维 |
+
+---
+
+## 绿联 NAS 部署
+
+### 前置
+
+在绿联「应用中心」安装 **Docker** 套件。确认 SSH 可用（控制面板 → 终端机 → 启用 SSH）。
+
+### 方式一：deploy.sh（推荐）
 
 ```bash
 git clone git@github.com:Mogvl/huangguo-down.git
@@ -56,192 +72,165 @@ cd huangguo-down
 ./deploy.sh
 ```
 
-脚本会自动拉取镜像、启动服务，并等到服务真正可用后才报告成功。
+数据目录默认 `/volume1/docker/huangguo-down`（配置/状态/日志）和 `/volume1/media/黄果`（视频）。想改：
 
-### 镜像说明
+```bash
+DATA_ROOT=/volume2/docker/huangguo-down MEDIA_ROOT=/volume2/media/黄果 ./deploy.sh
+```
 
-| 镜像 | 基础镜像 | 说明 |
+同时把 `docker-compose.yml` 里对应的四个路径改掉。
+
+### 方式二：docker compose 手动
+
+```bash
+docker compose up -d
+```
+
+前提是 `docker-compose.yml` 里的四个宿主机路径已改成真实路径，且目录已存在。
+
+### 方式三：绿联图形界面
+
+绿联的图形界面**只能拉取镜像，不能从源码构建**。所以先二选一：
+
+```bash
+./deploy.sh pull      # 拉 GHCR 预构建镜像（快）
+./deploy.sh build     # 本地构建（慢，但可改代码）
+```
+
+然后：
+
+1. Docker → **镜像**，确认有 `ghcr.io/mogvl/huangguo-down:latest`
+2. **创建容器**，名称 `huangguo-down`，勾选 **开机自启**
+3. **端口映射**：`7731→7731`、`7732→7732`（TCP）
+4. **存储空间**（容器路径必须完全一致，四个都要加）：
+
+   | 宿主机路径 | 容器路径 | 用途 |
+   |---|---|---|
+   | `/volume1/docker/huangguo-down/config` | `/config` | `config.json` |
+   | `/volume1/docker/huangguo-down/data` | `/data` | SQLite 状态库 |
+   | `/volume1/docker/huangguo-down/logs` | `/logs` | 轮转日志 |
+   | `/volume1/media/黄果` | `/media` | 下载的视频 |
+
+5. **环境变量**：`TZ=Asia/Shanghai`、`SCHEDULE=03:30`、`UMASK=000`、`HGXZ_PORT=7731`、`HGXZ_API_PORT=7732`
+6. **命令** 留空（镜像默认 `--daemon`）
+
+### 验证
+
+```bash
+curl http://<NAS的IP>:7731/healthz   # 前端
+curl http://<NAS的IP>:7732/healthz   # 后端
+# {"status":"ok","version":"1.1.0-nas","ready":true}
+```
+
+浏览器打开 `http://<NAS的IP>:7731`。
+
+---
+
+## 环境变量
+
+所有变量都是可选的，不填则使用 `config.json` 里的值。
+
+| 变量 | 默认 | 说明 |
 |---|---|---|
-| `ghcr.io/mogvl/huangguo-down-web` | nginx:1.27-alpine | 静态页 + API 反代 |
-| `ghcr.io/mogvl/huangguo-down-api` | node:20-alpine | 解析核心 + 下载服务 |
+| `TZ` | `Asia/Shanghai` | 容器时区，影响定时任务 |
+| `SCHEDULE` | `03:30` | 每日同步时间 `HH:MM` |
+| `HGXZ_SYNC_ON_START` | `1` | 启动时是否立即同步一次 |
+| `UMASK` | `022`（镜像）/ `000`（compose） | 新文件权限掩码 |
+| `PUID` / `PGID` | 空 | 以指定 uid/gid 运行（需 root 启动） |
+| `HGXZ_PORT` | `7731` | 前端 WebUI 端口 |
+| `HGXZ_API_PORT` | `7732` | 后端 API 端口（`0` 或与前端相同 = 单端口） |
+| `HGXZ_WEB_TOKEN` | 空 | WebUI 共享口令，空=不鉴权 |
+| `HGXZ_MEDIA_ROOT` | `/media` | 视频根目录 |
+| `HGXZ_STATE_DB` | `/data/state.sqlite3` | 状态库路径 |
+| `HGXZ_LOG_DIR` | `/logs` | 日志目录 |
+| `HGXZ_CONFIG` | `/config/config.json` | 配置文件路径 |
+| `HGXZ_BASE_URL` | 见模板 | 站点主域名 |
+| `HGXZ_BACKUP_URLS` | 见模板 | 备用域名，逗号分隔 |
+| `HGXZ_REQUEST_INTERVAL` | `2` | 请求间隔（秒） |
+| `HGXZ_TIMEOUT` | `30` | 单次请求超时（秒） |
+| `HGXZ_RETRIES` | `3` | 单集重试次数 |
+| `HGXZ_MINIMUM_DURATION` | `3` | 有效视频最短时长（秒） |
+| `HGXZ_RECHECK_DAYS` | `7` | 已完结专辑复查间隔（天） |
+| `HGXZ_FAILURE_COOLDOWN_HOURS` | `24` | 失败集冷却时间（小时） |
+| `HGXZ_EPISODE_TIMEOUT` | `1800` | 单集下载超时（秒） |
+| `HGXZ_LOG_LEVEL` | `INFO` | 日志级别 |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | 空 | 代理，站点被墙时需要 |
 
-两个镜像都带 `latest` 与 `sha` 双标签，公开可匿名拉取。
-
----
-
-## 二、端口说明
-
-| 端口 | 服务 | 是否对外 | 用途 |
-|---|---|---|---|
-| **7731** | 前端 nginx | ✅ 对外 | 浏览器访问入口，静态页 + API 反代 |
-| **7732** | 后端 Node | ❌ 仅内网 | 只被 nginx 调用；调试时可临时映射 |
-
-**你只需要记住 7731。** 前端页面里的所有请求都是同源相对路径（`/api/...`），
-由 nginx 转发到后端，所以不存在跨域问题，也不需要配置任何 API 地址。
-
-如果确实要直连后端调试，把 `docker-compose.yml` 里 `api` 服务的 `ports` 注释打开：
-
-```yaml
-  api:
-    # ports:
-    #   - "7732:7732"
-```
-
----
-
-## 三、日常运维
-
-```bash
-./deploy.sh            # 构建并启动
-./deploy.sh logs       # 实时日志
-./deploy.sh status     # 查看状态
-./deploy.sh restart    # 重启
-./deploy.sh stop       # 停止
-./deploy.sh update     # 拉取最新镜像并重建
-./deploy.sh build      # 从源码本地构建（改代码自测用）
-```
-
-或直接用 compose：
-
-```bash
-docker compose ps
-docker compose logs -f
-docker compose down
-```
-
-### 健康检查
-
-```bash
-curl http://127.0.0.1:7731/healthz
-# {"status":"ok","uptime":123,"port":7732}
-```
-
-两个容器都带 `HEALTHCHECK`，`web` 会等 `api` 变为 healthy 后才启动。
+> **代理注意**：`NO_PROXY` 不要包含站点域名，否则主站会直连超时。填局域网真实 IP，不能填 `127.0.0.1`（那指向容器自己）。
 
 ---
 
-## 四、接口一览
+## 命令行用法
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/` | 服务状态 + 分类枚举 |
-| GET | `/api/categories` | 分类、排序、榜单、吃瓜枚举 |
-| GET | `/api/all` | 首页聚合（并行拉取） |
-| GET | `/api/category/{tid}?page=1&size=50&sort=latest` | 分类列表 |
-| GET | `/api/ranks/{type}?page=1&size=50` | 排行榜 `hot`/`recommend`/`potential` |
-| GET | `/api/topics` | 专辑列表 |
-| GET | `/api/topics?slug={slug}&page=1` | 专辑内视频 |
-| GET | `/api/chigua?cate=all&page=1` | 吃瓜 `all`/`remen`/`yuanchuang` |
-| GET | `/api/search/{关键词}?page=1` | 搜索 |
-| GET | `/api/detail/{id}` | 详情 + 剧集列表 |
-| GET | `/api/play?url={页面地址}&ep=1` | 解析播放地址 |
-| GET | `/media?url={封面地址}` | 封面解密代理 |
-| GET | `/raw?url={m3u8}` | HLS 分片/密钥代理 |
-| GET | `/download?url={页面地址}&ep=1` | **整集下载**（返回 `.ts`） |
-| GET | `/download?...&probe=1` | 下载探针（返回分片数/时长/文件名） |
-| GET | `/healthz` | 健康检查 |
+```bash
+# 常驻模式（容器默认）
+docker exec huangguo-down python -m HGXZ.cli --daemon
 
-在线文档页：`http://你的NAS_IP:7731/api.html`
+# 单次同步
+docker exec huangguo-down python -m HGXZ.cli
+
+# 只同步某个专辑
+docker exec huangguo-down python -m HGXZ.cli --only-id 12345
+
+# 只写元数据，不下载视频
+docker exec huangguo-down python -m HGXZ.cli --metadata-only
+
+# 扫描媒体目录，把已有视频注册进状态库
+docker exec huangguo-down python -m HGXZ.cli --scan-existing
+
+# 重建损坏的封面
+docker exec huangguo-down python -m HGXZ.cli --rebuild-covers
+
+# 限制范围，便于调试
+docker exec huangguo-down python -m HGXZ.cli --max-albums 3 --max-episodes 2
+```
+
+注意：镜像的 `ENTRYPOINT` 是 entrypoint 脚本，`docker exec` 里要写完整的 `python -m HGXZ.cli`。
 
 ---
 
-## 五、下载功能
+## 媒体库结构
 
-播放页有「**下载本集**」按钮。也可以直接调接口：
-
-```bash
-# 先探一下，不实际传输
-curl "http://NAS_IP:7731/download?url=https://huangguoai.com/video/5667/&ep=1&probe=1"
-
-# 下载
-curl -OJ "http://NAS_IP:7731/download?url=https://huangguoai.com/video/5667/&ep=1"
+```
+/media/
+├── AI成人短剧/
+│   ├── 剧名A [huangguo-12345]/
+│   │   ├── tvshow.nfo
+│   │   ├── poster.jpg
+│   │   └── Season 01/
+│   │       ├── 剧名A.S01E01.mp4
+│   │       ├── 剧名A.S01E01.nfo
+│   │       └── ...
+└── AI成人漫剧/
 ```
 
-流程：解析 m3u8 → 4 并发拉分片 → AES-128 解密（去 PKCS#7 填充）→ 顺序拼接 → 流式输出。
-
-实测：57 分片 / 223 MB / 约 5 秒；产物为 188 整数倍，TS 同步字节 100% 正确。
-
-输出是 MPEG-TS，转 MP4：
-
-```bash
-ffmpeg -i 东京牛头人_第1集.ts -c copy out.mp4
-```
+在 Emby / Jellyfin 里把 `/media` 添加为 **节目（电视节目）** 类型即可。
 
 ---
 
-## 六、本地开发（不用 Docker）
+## 排错
 
-需要 Node 18+。
-
-```bash
-npm start          # 单端口模式：http://127.0.0.1:7732，静态页 + API 同端口
-npm run check      # 自检 19 项
-```
-
-单端口模式下 `SERVE_STATIC` 默认为开，`node server.js` 就能完整跑起来，
-不需要 nginx。这与 Docker 的双端口形态共用同一份 `server.js`。
-
----
-
-## 七、CI
-
-`.github/workflows/ci.yml` 在 push 到 `main` 时执行四个 job：
-
-| Job | 内容 |
+| 现象 | 处理 |
 |---|---|
-| `lint` | JS 语法、package.json、docker-compose.yml、nginx.conf 校验，**并实起容器验证反代链路** |
-| `smoke` | 启动服务跑 19 项自检（真实访问上游站点） |
-| `publish` | 构建两个镜像并推送到 GHCR（`latest` + `sha`） |
-| `verify-images` | 用 compose 拉取刚推送的镜像启动，验证 7731 可用 |
-
-`verify-images` 是关键一环：它模拟 NAS 上的真实流程（`compose pull` → `up -d`），
-确认推上去的镜像**真的能一键部署**，而不是只在构建阶段能跑。
-
-### 为什么 lint 里要起容器
-
-nginx 配置有个隐蔽问题：用 `set $backend` + `proxy_pass $backend` 时，
-如果没配 `resolver`，容器内会报 `no resolver defined to resolve api` 并直接 **502**。
-这种错误 `nginx -t` 完全查不出来（语法是对的），必须真的发一次请求才会暴露。
-所以 lint job 里单独起了一个 api + web 的临时网络做真实反代验证。
+| 容器反复重启 | `docker logs hgxz` 看第一行；多半是 `/config` 没写权限，或 `config.json` JSON 语法错误 |
+| `/healthz` 不通但容器 running | 检查端口映射，以及 `HGXZ_PORT`/`HGXZ_API_PORT` 是否和映射的容器端口一致 |
+| 7731 通、7732 不通 | 后端端口没映射，或 `HGXZ_API_PORT=0` 关掉了；只用 WebUI 的话这不影响使用 |
+| 日志 `SSL: WRONG_VERSION_NUMBER` / `404` | DNS 污染，配 `HTTP_PROXY`/`HTTPS_PROXY`，且 `NO_PROXY` 不含站点域名 |
+| 日志 `HTTP 403` | 站点风控，调大 `HGXZ_REQUEST_INTERVAL` |
+| Emby 读不到文件 | 加 `UMASK=000`，或设 `PUID`/`PGID` 为 Emby 的运行用户 |
+| 某集一直失败 | 可能已下架，24 小时冷却；WebUI 点「重置失败」立即重试 |
+| 界面无封面 | 站点封面接口异常时自动回退 og:image，两者都失败会记 `cover via ... failed` |
+| ARM 机型构建失败 | 确认 `uname -m` 是 `aarch64`；若是 `armv7l` 需自行换基础镜像 |
 
 ---
 
-## 八、目录结构
+## 已知限制
 
-```
-huangguo-down/
-├── docker-compose.yml          # 一键部署编排
-├── deploy.sh                   # 一键脚本（构建/日志/重启/更新）
-├── server.js                   # 后端服务：API + 下载（也支持单端口静态托管）
-├── package.json                # 零依赖
-├── lib/
-│   └── download.js             # m3u8 解析 / AES-128 解密 / 分片拼接
-├── worker/
-│   └── index.js                # 解析核心（官方 JSON 优先，HTML 兜底）
-├── public/                     # 静态页（由 nginx 托管）
-│   ├── index.html              # 全部剧集
-│   ├── ranks.html              # 排行榜
-│   ├── topics.html             # 专辑
-│   ├── chigua.html             # 吃瓜
-│   ├── api.html                # 接口文档
-│   ├── play.html               # 播放页
-│   ├── app.js / style.css / play.css
-│   └── vendor/hls.min.js       # 内置播放器库
-├── docker/
-│   ├── api.Dockerfile          # node:20-alpine
-│   ├── web.Dockerfile          # nginx:1.27-alpine
-│   └── nginx.conf              # 反代 + 静态托管
-├── scripts/check.js            # 19 项自检
-└── .github/workflows/ci.yml    # CI
-```
+- 解析依赖目标站点 DOM，站点改版会导致抓取失效（原版已有多次此类修复）。
+- 无单元测试，验证靠端到端跑一遍。
+- 封面解密使用了站点硬编码的 AES 密钥，属于绕过技术保护措施，请自行评估合规风险。
+- 内容来源为标注成人向的第三方站点，版权状态不明。
 
----
+## 许可证
 
-## 九、注意事项
-
-- **必须能访问 `huangguoai.com`**：数据实时抓取，不是本地快照
-- **`/download` 单集 100~200 MB**：注意 NAS 存储空间；nginx 已关闭该路径的缓冲，不会先落盘到临时目录
-- **`Host` 头必须带端口**：nginx 配置里用的是 `$http_host` 而非 `$host`，否则 `/raw` 重写出的分片地址会丢端口导致播放失败
-- **后端地址用 `resolver 127.0.0.11` 动态解析**：Docker 内置 DNS。不能用 `upstream` 块写死服务名，因为 nginx 只在启动时解析一次，后端容器重建换 IP 后会永久 502
-- **上游改版会失效**：解析依赖页面结构，源站改版后需更新 `worker/index.js`
-- 分片地址带 `auth_key` 签名，有效期约 1~2 小时
+仅供个人学习与自用。

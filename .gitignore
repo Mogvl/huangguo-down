@@ -1,4 +1,20 @@
-node_modules/
-.DS_Store
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 运行时数据
+*.sqlite3
 *.log
-*.ts
+/data/
+/logs/
+.env
+
+# 本地运行配置（可能含代理地址等私有信息，切勿提交）
+config.json
+
+# 系统
+.DS_Store
+Thumbs.db

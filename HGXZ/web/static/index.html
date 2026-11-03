@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HGXZ - 黄果下载</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0d0f14;--bg2:#12151d;--card:#171b25;--card2:#1d2230;--border:#272d3d;
+  --text:#e6e8ee;--text2:#98a0b3;--text3:#5f687d;
+  --accent:#f59e0b;--accent-dim:#b4740773;
+  --green:#22c55e;--green-dim:#16382a;--red:#ef4444;--red-dim:#3b1a1a;
+  --blue:#3b82f6;--blue-dim:#152a44;--purple:#a855f7;
+  --radius:12px;--radius-sm:8px;
+  --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.6);
+}
+html{-webkit-text-size-adjust:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;font-size:15px}
+a{color:var(--accent);text-decoration:none}
+button{font-family:inherit}
+.container{max-width:1240px;margin:0 auto;padding:16px}
+
+/* ---------- Header ---------- */
+header{background:rgba(18,21,29,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);
+  padding:10px 0;position:sticky;top:0;z-index:100}
+header .container{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.logo{font-size:1.25em;font-weight:700;color:var(--accent);white-space:nowrap}
+.logo small{color:var(--text3);font-weight:400;font-size:.62em;margin-left:6px}
+.header-actions{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ---------- Buttons ---------- */
+.btn{padding:8px 14px;border:1px solid transparent;border-radius:var(--radius-sm);cursor:pointer;
+  font-size:.85em;font-weight:500;transition:background .15s,border-color .15s,opacity .15s;
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap;background:var(--card2);color:var(--text)}
+.btn:hover{background:#252b3b}
+.btn-primary{background:var(--accent);color:#1a1200;font-weight:600}
+.btn-primary:hover{background:#d97706}
+.btn-danger{background:var(--red-dim);color:#fca5a5;border-color:#5c2222}
+.btn-danger:hover{background:#4a1f1f}
+.btn-ghost{background:transparent;border-color:var(--border);color:var(--text2)}
+.btn-ghost:hover{background:var(--card2);color:var(--text)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-sm{padding:5px 10px;font-size:.78em}
+
+/* ---------- Tabs ---------- */
+.tabs{display:flex;gap:2px;margin:18px 0 16px;border-bottom:1px solid var(--border);overflow-x:auto;
+  scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{padding:10px 18px;cursor:pointer;color:var(--text2);border-bottom:2px solid transparent;
+  transition:color .15s,border-color .15s;white-space:nowrap;font-size:.92em;font-weight:500}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ---------- Cards ---------- */
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--shadow);overflow:hidden}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:14px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.card-title{font-size:.92em;font-weight:600;display:flex;align-items:center;gap:8px;min-width:0}
+.card-body{padding:18px}
+.section-title{font-size:.8em;font-weight:600;color:var(--text3);text-transform:uppercase;
+  letter-spacing:.08em;margin:24px 0 12px}
+
+/* ---------- Stats ---------- */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 18px;position:relative;overflow:hidden}
+.stat::after{content:'';position:absolute;inset:0 auto 0 0;width:3px;background:var(--text3);opacity:.7}
+.stat.green::after{background:var(--green)}
+.stat.red::after{background:var(--red)}
+.stat.blue::after{background:var(--blue)}
+.stat.amber::after{background:var(--accent)}
+.stat.purple::after{background:var(--purple)}
+.stat .value{font-size:1.75em;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;
+  overflow-wrap:anywhere}
+.stat .label{font-size:.78em;color:var(--text2);margin-top:2px;display:flex;align-items:center;gap:6px}
+.stat .sub{font-size:.72em;color:var(--text3);margin-top:4px}
+
+/* ---------- Sync bar ---------- */
+.sync-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  margin-bottom:16px}
+.sync-left{display:flex;align-items:center;gap:10px;min-width:0;flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
+.dot.running{background:var(--accent);animation:pulse 1.2s infinite}
+.dot.idle{background:var(--green)}
+.dot.error{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.85)}}
+.sync-meta{font-size:.78em;color:var(--text3)}
+
+/* ---------- Filters ---------- */
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.input,.select{background:var(--card);border:1px solid var(--border);color:var(--text);
+  padding:8px 12px;border-radius:var(--radius-sm);font-size:.86em;font-family:inherit;min-width:0}
+.input:focus,.select:focus{outline:none;border-color:var(--accent)}
+.input::placeholder{color:var(--text3)}
+.search-wrap{position:relative;flex:1 1 200px;min-width:160px}
+.search-wrap .input{width:100%;padding-left:32px}
+.search-wrap::before{content:'🔍';position:absolute;left:10px;top:50%;transform:translateY(-50%);
+  font-size:.8em;opacity:.55;pointer-events:none}
+.filters .spacer{flex:1 1 auto}
+
+/* ---------- Album list ---------- */
+.album-list{display:grid;gap:10px}
+.album-item{display:grid;grid-template-columns:56px minmax(0,1fr) auto;gap:14px;align-items:center;
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px 16px;cursor:pointer;transition:border-color .15s,background .15s}
+.album-item:hover{border-color:var(--accent-dim);background:var(--card2)}
+.cover{width:56px;height:76px;border-radius:6px;background:var(--card2);border:1px solid var(--border);
+  object-fit:cover;flex:none;display:block}
+.cover.ph{display:flex;align-items:center;justify-content:center;font-size:1.3em;color:var(--text3)}
+.album-main{min-width:0}
+.album-title{font-weight:600;font-size:.95em;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.album-meta{display:flex;gap:10px;font-size:.76em;color:var(--text2);margin-top:5px;flex-wrap:wrap;
+  align-items:center}
+.album-right{text-align:right;white-space:nowrap;min-width:96px}
+.album-pct{font-size:.92em;font-weight:700;font-variant-numeric:tabular-nums}
+.progress{width:100%;height:6px;background:#0a0c11;border-radius:3px;overflow:hidden;margin-top:6px;
+  display:flex}
+.progress .ok{height:100%;background:var(--green);transition:width .3s}
+.progress .bad{height:100%;background:var(--red);transition:width .3s}
+
+/* ---------- Tags ---------- */
+.tag{display:inline-block;padding:2px 8px;border-radius:5px;font-size:.72em;font-weight:600;
+  white-space:nowrap;line-height:1.5}
+.tag-done{background:var(--green-dim);color:#4ade80}
+.tag-failed{background:var(--red-dim);color:#fca5a5}
+.tag-ongoing{background:#2a2510;color:#fbbf24}
+.tag-info{background:var(--blue-dim);color:#93c5fd}
+.tag-mute{background:var(--card2);color:var(--text2)}
+.tag-purple{background:#2a1a3d;color:#d8b4fe}
+
+/* ---------- Detail ---------- */
+.detail-head{display:grid;grid-template-columns:120px minmax(0,1fr);gap:18px;align-items:start}
+.detail-cover{width:120px;aspect-ratio:3/4;border-radius:var(--radius-sm);object-fit:cover;
+  background:var(--card2);border:1px solid var(--border)}
+.detail-cover.ph{display:flex;align-items:center;justify-content:center;font-size:2em;color:var(--text3)}
+.detail-title{font-size:1.15em;font-weight:700;overflow-wrap:anywhere;line-height:1.35}
+.detail-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:.8em;margin-top:12px}
+.kv dt{color:var(--text3);white-space:nowrap}
+.kv dd{color:var(--text2);overflow-wrap:anywhere}
+.back-btn{display:inline-flex;align-items:center;gap:6px;color:var(--text2);cursor:pointer;
+  font-size:.85em;margin-bottom:12px;background:none;border:none;padding:0}
+.back-btn:hover{color:var(--accent)}
+
+.ep-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin-top:6px}
+.ep{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;
+  background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);
+  font-size:.82em;min-width:0}
+.ep:hover{border-color:var(--border);background:var(--card2)}
+.ep-num{font-weight:600;flex:none}
+.ep-time{font-size:.85em;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- Log viewer ---------- */
+.log-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.log-box{background:#08090d;border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;
+  height:min(60vh,520px);overflow-y:auto;font-family:ui-monospace,"SF Mono",Consolas,monospace;
+  font-size:.78em;line-height:1.65;overscroll-behavior:contain}
+.log-line{white-space:pre-wrap;overflow-wrap:anywhere;display:flex;gap:8px}
+.log-line .lv{flex:none;font-weight:600;width:3.6em}
+.log-line.ERROR .lv,.log-line.ERROR .msg{color:#fca5a5}
+.log-line.WARNING .lv,.log-line.WARNING .msg{color:#fbbf24}
+.log-line.INFO .msg{color:#b9c0cf}
+.log-line.DEBUG .msg{color:var(--text3)}
+.log-line .ts{color:var(--text3);flex:none}
+.log-line .msg{min-width:0}
+
+/* ---------- Page sections ---------- */
+.page{display:none}
+.page.active{display:block}
+
+/* ---------- Empty / misc ---------- */
+.empty{text-align:center;padding:48px 16px;color:var(--text3);font-size:.9em}
+.empty .big{font-size:2.4em;display:block;margin-bottom:10px;opacity:.5}
+.spinner{width:14px;height:14px;border:2px solid var(--text3);border-top-color:var(--accent);
+  border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(80px);
+  background:var(--card2);border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:11px 20px;font-size:.86em;box-shadow:var(--shadow);z-index:300;opacity:0;
+  transition:transform .25s,opacity .25s;max-width:calc(100vw - 32px);text-align:center}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.toast.err{border-color:#5c2222;background:#2a1616}
+.hint{font-size:.74em;color:var(--text3);margin-top:8px;line-height:1.7}
+
+/* ---------- Mobile ---------- */
+@media(max-width:640px){
+  body{font-size:14px}
+  .container{padding:12px}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .stat{padding:13px 14px}
+  .stat .value{font-size:1.4em}
+  .album-item{grid-template-columns:44px minmax(0,1fr);gap:12px}
+  .album-item .album-right{grid-column:1/-1;text-align:left;min-width:0}
+  .cover{width:44px;height:60px}
+  .detail-head{grid-template-columns:80px minmax(0,1fr);gap:14px}
+  .detail-cover{width:80px}
+  .ep-grid{grid-template-columns:1fr}
+  .filters .search-wrap{flex:1 1 100%}
+  .filters .select{flex:1 1 calc(50% - 4px)}
+  .header-actions .btn{flex:1 1 auto;justify-content:center}
+  .log-box{font-size:.72em}
+  .log-line .ts{display:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="brand">
+      <div class="logo">🍊 HGXZ<small>黄果下载</small></div>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-ghost" id="btn-scan">📂 扫描已有</button>
+      <button class="btn btn-primary" id="btn-sync">🔄 立即同步</button>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+  <div class="tabs">
+    <div class="tab active" data-page="dashboard">仪表盘</div>
+    <div class="tab" data-page="albums">专辑列表</div>
+    <div class="tab" data-page="logs">同步日志</div>
+    <div class="tab" data-page="settings">运行参数</div>
+  </div>
+
+  <!-- ================= Dashboard ================= -->
+  <div class="page active" id="page-dashboard">
+    <div class="sync-bar">
+      <div class="sync-left">
+        <span class="dot idle" id="sync-dot"></span>
+        <strong id="sync-text">就绪</strong>
+        <span class="sync-meta" id="sync-detail"></span>
+      </div>
+      <span class="sync-meta" id="last-sync">上次同步：-</span>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="section-title">分类进度</div>
+    <div class="card"><div class="card-body" id="cat-stats"><div class="empty">暂无数据</div></div></div>
+
+    <div class="section-title">最近完成</div>
+    <div class="card"><div class="card-body" id="recent"><div class="empty">暂无数据</div></div></div>
+  </div>
+
+  <!-- ================= Albums ================= -->
+  <div class="page" id="page-albums">
+    <div id="albums-toolbar">
+      <div class="filters">
+        <div class="search-wrap">
+          <input type="text" class="input" id="filter-search" placeholder="搜索剧名…">
+        </div>
+        <select class="select" id="filter-category"><option value="">全部分类</option></select>
+        <select class="select" id="filter-status">
+          <option value="">全部状态</option>
+          <option value="done">已完成</option>
+          <option value="downloading">下载中</option>
+          <option value="failed">有失败</option>
+        </select>
+        <span class="spacer"></span>
+        <button class="btn btn-danger btn-sm" id="btn-retry-all">🔁 重试全部失败</button>
+      </div>
+      <div class="sync-meta" id="album-count" style="margin-bottom:10px"></div>
+    </div>
+    <div id="album-list" class="album-list"></div>
+    <div id="album-detail"></div>
+  </div>
+
+  <!-- ================= Logs ================= -->
+  <div class="page" id="page-logs">
+    <div class="log-toolbar">
+      <span class="tag tag-ongoing" id="ws-status">连接中…</span>
+      <select class="select" id="log-level">
+        <option value="">全部级别</option>
+        <option value="ERROR">仅错误</option>
+        <option value="WARNING">警告及以上</option>
+        <option value="INFO">信息及以上</option>
+      </select>
+      <div class="search-wrap" style="flex:0 1 200px">
+        <input type="text" class="input" id="log-search" placeholder="过滤关键字…">
+      </div>
+      <label class="sync-meta" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="log-autoscroll" checked> 自动滚动
+      </label>
+      <button class="btn btn-ghost btn-sm" id="btn-clear-log">清屏</button>
+    </div>
+    <div class="log-box" id="log-box"></div>
+    <div class="hint">实时日志经 WebSocket 推送，最多保留最近 2000 条；切换页面不会中断后台同步。</div>
+  </div>
+
+  <!-- ================= Settings ================= -->
+  <div class="page" id="page-settings">
+    <div class="card">
+      <div class="card-head"><div class="card-title">⚙️ 运行参数（只读）</div></div>
+      <div class="card-body"><dl class="kv" id="settings-kv"><dt>加载中…</dt></dl></div>
+    </div>
+    <div class="hint">
+      以上参数来自容器内 <code>/config/config.json</code> 与环境变量。修改后需重启容器生效。<br>
+      主站与视频 CDN 需经代理访问时，请在容器环境变量中设置 <code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code>。
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* Same-origin by default: the UI port serves /api itself, so no CORS and no
+   hard-coded backend port. An operator who wants the browser to talk to the
+   API port directly can pass ?api=http://host:7732 once. */
+const API = (() => {
+  const fromUrl = new URLSearchParams(location.search).get('api');
+  if (fromUrl) { try { localStorage.setItem('hgxz_api', fromUrl); } catch(e){} return fromUrl.replace(/\/$/, ''); }
+  try { return localStorage.getItem('hgxz_api') || ''; } catch(e){ return ''; }
+})();
+/* Optional shared token (HGXZ_WEB_TOKEN). Accept it from ?token=... once and
+   keep it in localStorage so every later request and the log socket carry it. */
+const TOKEN = (() => {
+  const fromUrl = new URLSearchParams(location.search).get('token');
+  if (fromUrl) { try { localStorage.setItem('hgxz_token', fromUrl); } catch(e){} return fromUrl; }
+  try { return localStorage.getItem('hgxz_token') || ''; } catch(e){ return ''; }
+})();
+function withToken(path){
+  if (!TOKEN) return path;
+  return path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+}
+let ws = null, currentAlbumId = null, debounceTimer = null;
+let allLogs = [], albumCache = [];
+
+/* ---------------- helpers ---------------- */
+function esc(v){ const d = document.createElement('div'); d.textContent = v == null ? '' : String(v); return d.innerHTML; }
+function toast(msg, isErr){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (isErr ? ' err' : '');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.className = 'toast', 2600);
+}
+async function api(path, opts){
+  opts = Object.assign({}, opts);
+  if (TOKEN) opts.headers = Object.assign({}, opts.headers, {'X-HGXZ-Token': TOKEN});
+  const r = await fetch(API + path, opts);
+  if (!r.ok) {
+    let detail = '';
+    try { detail = (await r.json()).error || ''; } catch(e){}
+    throw new Error(detail || ('HTTP ' + r.status));
+  }
+  return r.json();
+}
+function fmtBytes(n){
+  n = Number(n) || 0;
+  if (n <= 0) return '0 B';
+  const u = ['B','KB','MB','GB','TB'];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), u.length - 1);
+  return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + u[i];
+}
+function fmtTime(s){
+  if (!s) return '-';
+  return String(s).slice(0, 19).replace('T', ' ');
+}
+function relTime(s){
+  if (!s) return '从未';
+  const t = Date.parse(s.endsWith('Z') || s.includes('+') ? s : s + 'Z');
+  if (isNaN(t)) return fmtTime(s);
+  const d = Math.floor((Date.now() - t) / 1000);
+  if (d < 60) return '刚刚';
+  if (d < 3600) return Math.floor(d / 60) + ' 分钟前';
+  if (d < 86400) return Math.floor(d / 3600) + ' 小时前';
+  return Math.floor(d / 86400) + ' 天前';
+}
+/* Percentages are clamped: a show that grew on the site can report more
+   finished episodes than the last known episode_count. */
+function pctOf(part, whole){
+  if (!whole || whole <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round(part / whole * 100)));
+}
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    const page = tab.dataset.page;
+    document.getElementById('page-' + page).classList.add('active');
+    if (page === 'albums') loadAlbums();
+    if (page === 'logs') { connectWS(); renderLogs(); }
+    if (page === 'dashboard') loadDashboard();
+    if (page === 'settings') loadSettings();
+  });
+});
+
+/* ---------------- dashboard ---------------- */
+async function loadDashboard(){
+  try {
+    const d = await api('/api/dashboard');
+    // Databases created before size tracking report 0 bytes even though
+    // files exist; point the user at the scan that backfills them.
+    const sizeHint = (!d.downloaded_bytes && d.done_episodes)
+      ? '<span style="color:#fbbf24">点「扫描已有」补全</span>'
+      : fmtBytes(d.downloaded_bytes);
+    document.getElementById('stats').innerHTML = `
+      <div class="stat blue"><div class="value">${d.albums || 0}</div><div class="label">专辑总数</div>
+        <div class="sub">共 ${d.total_episodes || 0} 集</div></div>
+      <div class="stat green"><div class="value">${d.done_episodes || 0}</div><div class="label">已下载</div>
+        <div class="sub">${sizeHint}</div></div>
+      <div class="stat amber"><div class="value">${d.complete_albums || 0}</div><div class="label">完整专辑</div>
+        <div class="sub">已完结 ${d.ended_albums || 0} 部</div></div>
+      <div class="stat red"><div class="value">${d.failed_episodes || 0}</div><div class="label">失败集数</div>
+        <div class="sub">${d.failed_episodes ? '可点击重试' : '状态良好'}</div></div>
+    `;
+    updateSync(d.sync);
+    const sel = document.getElementById('filter-category');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">全部分类</option>' +
+      (d.categories || []).map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    sel.value = cur;
+    await loadCategoryStats(d.categories || []);
+    await loadRecent();
+  } catch(e) { toast('仪表盘加载失败：' + e.message, true); }
+}
+
+async function loadCategoryStats(categories){
+  const box = document.getElementById('cat-stats');
+  try {
+    const groups = await Promise.all(categories.map(c =>
+      api('/api/albums?category=' + encodeURIComponent(c)).then(rows => ({name: c, rows}))
+    ));
+    if (!groups.length) { box.innerHTML = '<div class="empty">暂无分类数据</div>'; return; }
+    box.innerHTML = groups.map(g => {
+      const total = g.rows.reduce((s, a) => s + (a.episode_count || 0), 0);
+      const done = g.rows.reduce((s, a) => s + (a.done_count || 0), 0);
+      const failed = g.rows.reduce((s, a) => s + (a.failed_count || 0), 0);
+      const pct = pctOf(done, total);
+      const badPct = pctOf(failed, total);
+      const doneW = total ? Math.min(100, done / total * 100) : 0;
+      const badW = total ? Math.min(100 - doneW, failed / total * 100) : 0;
+      return `<div style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:.85em">
+          <span style="font-weight:600">${esc(g.name)}</span>
+          <span class="sync-meta">${g.rows.length} 部 · ${done}/${total} 集 · ${pct}%${
+            failed ? ` · <span style="color:#fca5a5">失败 ${failed}</span>` : ''}</span>
+        </div>
+        <div class="progress" style="margin-top:8px;height:8px">
+          <div class="ok" style="width:${doneW}%"></div>
+          <div class="bad" style="width:${badW}%"></div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { box.innerHTML = `<div class="empty">统计失败：${esc(e.message)}</div>`; }
+}
+
+async function loadRecent(){
+  const box = document.getElementById('recent');
+  try {
+    const rows = await api('/api/albums');
+    const done = rows.filter(a => a.episode_count > 0 && (a.done_count || 0) >= a.episode_count)
+                     .sort((a, b) => String(b.last_checked_at || '').localeCompare(String(a.last_checked_at || '')))
+                     .slice(0, 6);
+    if (!done.length) { box.innerHTML = '<div class="empty"><span class="big">📺</span>还没有完整下载的专辑</div>'; return; }
+    box.innerHTML = done.map(a => `
+      <div class="album-item" style="margin-bottom:8px" onclick="jumpToAlbum(${a.id})">
+        <img class="cover" loading="lazy" src="/api/albums/${a.id}/poster" alt=""
+             onerror="this.outerHTML='&lt;div class=&quot;cover ph&quot;&gt;🍊&lt;/div&gt;'">
+        <div class="album-main">
+          <div class="album-title">${esc(a.title)}</div>
+          <div class="album-meta">
+            <span class="tag tag-mute">${esc(a.category)}</span>
+            <span>${a.done_count}/${a.episode_count} 集</span>
+            <span class="tag tag-done">已完成</span>
+          </div>
+        </div>
+        <div class="album-right"><div class="sync-meta">${esc(relTime(a.last_checked_at))}</div></div>
+      </div>`).join('');
+  } catch(e) { box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`; }
+}
+
+function jumpToAlbum(id){
+  document.querySelector('.tab[data-page="albums"]').click();
+  setTimeout(() => showDetail(id), 60);
+}
+
+function updateSync(sync){
+  if (!sync) return;
+  const dot = document.getElementById('sync-dot');
+  dot.className = 'dot ' + (sync.running ? 'running' : sync.last_error ? 'error' : 'idle');
+  document.getElementById('sync-text').textContent =
+    sync.running ? '同步中…' : sync.last_error ? '上次同步出错' : '就绪';
+  const detail = document.getElementById('sync-detail');
+  detail.textContent = sync.last_error ? ('错误：' + sync.last_error).slice(0, 120) : '';
+  document.getElementById('last-sync').textContent = '上次同步：' + (sync.last_sync || '-');
+  document.getElementById('btn-sync').disabled = !!sync.running;
+  document.getElementById('btn-scan').disabled = !!sync.running;
+}
+
+/* ---------------- albums ---------------- */
+document.getElementById('filter-search').addEventListener('input', () => {
+  clearTimeout(debounceTimer); debounceTimer = setTimeout(loadAlbums, 280);
+});
+document.getElementById('filter-category').addEventListener('change', loadAlbums);
+document.getElementById('filter-status').addEventListener('change', loadAlbums);
+
+async function loadAlbums(){
+  if (currentAlbumId !== null) return;
+  const params = new URLSearchParams();
+  const cat = document.getElementById('filter-category').value;
+  const status = document.getElementById('filter-status').value;
+  const search = document.getElementById('filter-search').value.trim();
+  if (cat) params.set('category', cat);
+  if (status) params.set('status', status);
+  if (search) params.set('search', search);
+
+  const list = document.getElementById('album-list');
+  try {
+    const data = await api('/api/albums?' + params.toString());
+    albumCache = data;
+    document.getElementById('album-count').textContent = `共 ${data.length} 部专辑`;
+    if (!data.length) {
+      list.innerHTML = '<div class="empty"><span class="big">🔍</span>没有符合条件的专辑</div>';
+      return;
+    }
+    list.innerHTML = data.map(a => {
+      const total = a.episode_count || 0;
+      const done = a.done_count || 0;
+      const failed = a.failed_count || 0;
+      const shown = total || (done + failed);
+      const pct = pctOf(done, shown);
+      const doneW = shown ? Math.min(100, done / shown * 100) : 0;
+      const badW = shown ? Math.min(100 - doneW, failed / shown * 100) : 0;
+      const complete = total > 0 && done >= total;
+      let tag = '<span class="tag tag-ongoing">下载中</span>';
+      if (failed > 0) tag = '<span class="tag tag-failed">有失败</span>';
+      else if (complete && a.ended) tag = '<span class="tag tag-done">已完成</span>';
+      else if (complete) tag = '<span class="tag tag-done">已下全</span>';
+      return `
+        <div class="album-item" onclick="showDetail(${a.id})">
+          <img class="cover" loading="lazy" src="/api/albums/${a.id}/poster" alt=""
+               onerror="this.outerHTML='&lt;div class=&quot;cover ph&quot;&gt;🍊&lt;/div&gt;'">
+          <div class="album-main">
+            <div class="album-title">${esc(a.title)}</div>
+            <div class="album-meta">
+              <span class="tag tag-mute">${esc(a.category)}</span>
+              <span>${done}/${total || shown} 集</span>
+              ${tag}
+              <span class="sync-meta">${esc(relTime(a.last_checked_at))}</span>
+            </div>
+          </div>
+          <div class="album-right">
+            <div class="album-pct">${pct}%</div>
+            <div class="progress">
+              <div class="ok" style="width:${doneW}%"></div>
+              <div class="bad" style="width:${badW}%"></div>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+async function showDetail(albumId){
+  currentAlbumId = albumId;
+  document.getElementById('albums-toolbar').style.display = 'none';
+  document.getElementById('album-list').style.display = 'none';
+  const box = document.getElementById('album-detail');
+  box.style.display = 'block';
+  box.innerHTML = '<div class="empty"><span class="spinner"></span> 加载中…</div>';
+
+  try {
+    const a = await api('/api/albums/' + albumId);
+    const episodes = a.episodes || [];
+    const total = Math.max(a.episode_count || 0, episodes.length);
+    const done = a.done_count || 0;
+    const failed = a.failed_count || 0;
+    const missing = Math.max(0, total - done - failed);
+    const pct = pctOf(done, total);
+    const doneW = total ? Math.min(100, done / total * 100) : 0;
+    const badW = total ? Math.min(100 - doneW, failed / total * 100) : 0;
+    const epMap = {};
+    episodes.forEach(e => { epMap[e.episode] = e; });
+
+    let epHtml = '';
+    for (let i = 1; i <= total; i++) {
+      const e = epMap[i];
+      const status = e ? e.status : 'missing';
+      const cls = status === 'done' ? 'tag-done' : status === 'failed' ? 'tag-failed' : 'tag-ongoing';
+      const label = status === 'done' ? '已下载' : status === 'failed' ? '失败' : '等待';
+      epHtml += `<div class="ep">
+        <span class="ep-num">第 ${i} 集</span>
+        <span style="display:flex;gap:8px;align-items:center;min-width:0">
+          <span class="ep-time">${esc(relTime(e && e.updated_at))}</span>
+          <span class="tag ${cls}">${label}</span>
+        </span>
+      </div>`;
+    }
+
+    box.innerHTML = `
+      <div class="card">
+        <div class="card-body">
+          <button class="back-btn" onclick="backToList()">← 返回列表</button>
+          <div class="detail-head">
+            ${a.poster_available
+              ? `<img class="detail-cover" src="/api/albums/${a.id}/poster" alt=""
+                     onerror="this.outerHTML='&lt;div class=&quot;detail-cover ph&quot;&gt;🍊&lt;/div&gt;'">`
+              : '<div class="detail-cover ph">🍊</div>'}
+            <div style="min-width:0">
+              <div class="detail-title">${esc(a.title)}</div>
+              <div class="album-meta" style="margin-top:8px">
+                <span class="tag tag-mute">${esc(a.category)}</span>
+                <span class="tag ${a.ended ? 'tag-purple' : 'tag-info'}">${a.ended ? '已完结' : '连载中'}</span>
+                <span class="tag ${failed ? 'tag-failed' : 'tag-done'}">${done}/${total} 集 · ${pct}%</span>
+              </div>
+              <div class="progress" style="margin-top:12px;height:8px">
+                <div class="ok" style="width:${total ? done / total * 100 : 0}%"></div>
+                <div class="bad" style="width:${total ? failed / total * 100 : 0}%"></div>
+              </div>
+              <dl class="kv">
+                <dt>专辑 ID</dt><dd>huangguo-${a.id}</dd>
+                <dt>已下载容量</dt><dd>${fmtBytes(a.downloaded_bytes)}</dd>
+                <dt>最近下载</dt><dd>${esc(fmtTime(a.last_done_at))}</dd>
+                <dt>待下载 / 失败</dt><dd>${missing} 集 / ${failed} 集</dd>
+                <dt>存储路径</dt><dd>${esc(a.directory || '-')}</dd>
+              </dl>
+              <div class="detail-actions">
+                <button class="btn btn-primary btn-sm" onclick="syncAlbum(${a.id})">🔄 同步此专辑</button>
+                <button class="btn btn-danger btn-sm" onclick="retryAlbum(${a.id})">🔁 重置失败</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="section-title">剧集明细（${total} 集）</div>
+      <div class="card"><div class="card-body"><div class="ep-grid">${epHtml}</div></div></div>
+    `;
+  } catch(e) {
+    box.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+function backToList(){
+  currentAlbumId = null;
+  document.getElementById('album-detail').style.display = 'none';
+  document.getElementById('album-detail').innerHTML = '';
+  document.getElementById('album-list').style.display = '';
+  document.getElementById('albums-toolbar').style.display = '';
+  loadAlbums();
+}
+
+/* ---------------- actions ---------------- */
+document.getElementById('btn-sync').addEventListener('click', async () => {
+  if (!confirm('确定立即开始全量同步？将遍历所有分类并下载新增剧集。')) return;
+  try {
+    const r = await api('/api/sync', {method: 'POST'});
+    toast('同步已开始' + (r.album_id ? '（专辑 ' + r.album_id + '）' : ''));
+    updateSync({running: true, last_sync: null, last_error: null});
+  } catch(e) { toast('启动失败：' + e.message, true); }
+});
+document.getElementById('btn-scan').addEventListener('click', async () => {
+  if (!confirm('扫描媒体目录，将已有视频注册进状态库（不会重复下载）？')) return;
+  try {
+    await api('/api/scan-existing', {method: 'POST'});
+    toast('扫描已开始，可在日志页查看进度');
+    updateSync({running: true, last_sync: null, last_error: null});
+  } catch(e) { toast('启动失败：' + e.message, true); }
+});
+document.getElementById('btn-retry-all').addEventListener('click', async () => {
+  if (!confirm('重置所有失败记录？下次同步将重新尝试下载这些剧集。')) return;
+  try {
+    const r = await api('/api/retry-failed', {method: 'POST'});
+    toast('已重置 ' + r.reset + ' 条失败记录');
+    loadAlbums();
+  } catch(e) { toast('操作失败：' + e.message, true); }
+});
+async function syncAlbum(id){
+  try {
+    await api('/api/sync?album_id=' + id, {method: 'POST'});
+    toast('该专辑同步已开始');
+    updateSync({running: true, last_sync: null, last_error: null});
+  } catch(e) { toast('启动失败：' + e.message, true); }
+}
+async function retryAlbum(id){
+  try {
+    const r = await api('/api/retry-failed?album_id=' + id, {method: 'POST'});
+    toast('已重置 ' + r.reset + ' 条失败记录');
+    showDetail(id);
+  } catch(e) { toast('操作失败：' + e.message, true); }
+}
+
+/* ---------------- logs ---------------- */
+function connectWS(){
+  if (ws && ws.readyState <= 1) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsBase = API ? API.replace(/^http/, 'ws') : (proto + '//' + location.host);
+  ws = new WebSocket(withToken(wsBase + '/ws/logs'));
+  const badge = document.getElementById('ws-status');
+  ws.onopen = () => { badge.textContent = '● 已连接'; badge.className = 'tag tag-done'; };
+  ws.onclose = () => {
+    badge.textContent = '● 已断开，重连中'; badge.className = 'tag tag-failed';
+    setTimeout(connectWS, 3000);
+  };
+  ws.onerror = () => { try { ws.close(); } catch(e){} };
+  ws.onmessage = (e) => {
+    let entry; try { entry = JSON.parse(e.data); } catch(err) { return; }
+    if (entry.keepalive) return;
+    allLogs.push(entry);
+    if (allLogs.length > 2000) allLogs = allLogs.slice(-2000);
+    if (matchesFilter(entry)) appendLogLine(entry);
+  };
+}
+
+function levelRank(l){ return {DEBUG: 10, INFO: 20, WARNING: 30, ERROR: 40, CRITICAL: 50}[l] || 0; }
+function matchesFilter(entry){
+  const min = document.getElementById('log-level').value;
+  if (min && levelRank(entry.level) < levelRank(min)) return false;
+  const kw = document.getElementById('log-search').value.trim().toLowerCase();
+  if (kw && !(entry.message || '').toLowerCase().includes(kw)) return false;
+  return true;
+}
+function logLineHtml(entry){
+  const lv = String(entry.level || 'INFO');
+  let ts = '';
+  if (entry.timestamp) {
+    const d = new Date(entry.timestamp * 1000);
+    ts = isNaN(d) ? '' : d.toTimeString().slice(0, 8);
+  }
+  return `<div class="log-line ${esc(lv)}"><span class="ts">${esc(ts)}</span>
+    <span class="lv">${esc(lv)}</span><span class="msg">${esc(entry.message)}</span></div>`;
+}
+function appendLogLine(entry){
+  const box = document.getElementById('log-box');
+  box.insertAdjacentHTML('beforeend', logLineHtml(entry));
+  while (box.children.length > 2000) box.removeChild(box.firstChild);
+  if (document.getElementById('log-autoscroll').checked) box.scrollTop = box.scrollHeight;
+}
+function renderLogs(){
+  const box = document.getElementById('log-box');
+  const shown = allLogs.filter(matchesFilter);
+  box.innerHTML = shown.length ? shown.map(logLineHtml).join('')
+                               : '<div class="empty">暂无匹配日志</div>';
+  if (document.getElementById('log-autoscroll').checked) box.scrollTop = box.scrollHeight;
+}
+async function loadInitialLogs(){
+  try {
+    const logs = await api('/api/logs?n=500');
+    allLogs = logs;
+    renderLogs();
+  } catch(e) {}
+}
+document.getElementById('log-level').addEventListener('change', renderLogs);
+document.getElementById('log-search').addEventListener('input', () => {
+  clearTimeout(debounceTimer); debounceTimer = setTimeout(renderLogs, 200);
+});
+document.getElementById('btn-clear-log').addEventListener('click', () => {
+  allLogs = []; renderLogs();
+});
+
+/* ---------------- settings ---------------- */
+async function loadSettings(){
+  const dl = document.getElementById('settings-kv');
+  try {
+    const s = await api('/api/settings');
+    const rows = [
+      ['主站地址', s.base_url],
+      ['备用域名', (s.base_urls || []).slice(1).join('、') || '无'],
+      ['媒体目录', s.media_root],
+      ['分类', (s.categories || []).join('、')],
+      ['单集重试次数', s.retries],
+      ['最短有效时长', s.minimum_duration + ' 秒'],
+      ['完结复查间隔', s.recheck_days + ' 天'],
+      ['失败冷却', s.failure_cooldown_hours + ' 小时'],
+      ['单集超时', s.episode_timeout + ' 秒'],
+    ];
+    dl.innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+  } catch(e) {
+    dl.innerHTML = `<dt>加载失败</dt><dd>${esc(e.message)}</dd>`;
+  }
+}
+
+/* ---------------- polling ---------------- */
+let wasRunning = false;
+setInterval(async () => {
+  try {
+    const s = await api('/api/sync-status');
+    updateSync(s);
+    // Refresh the visible list once a sync finishes so new episodes show up.
+    if (wasRunning && !s.running) {
+      const onAlbums = document.getElementById('page-albums').classList.contains('active');
+      const onDash = document.getElementById('page-dashboard').classList.contains('active');
+      if (onAlbums && currentAlbumId === null) loadAlbums();
+      if (onDash) loadDashboard();
+    }
+    wasRunning = !!s.running;
+  } catch(e) {}
+}, 5000);
+
+/* ---------------- init ---------------- */
+loadDashboard();
+connectWS();
+loadInitialLogs();
+</script>
+</body>
+</html>

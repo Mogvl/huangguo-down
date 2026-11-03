@@ -1,9 +1,13 @@
+# 构建上下文里不需要的东西
 .git
 .github
-node_modules
-*.log
-README.md
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+tests
 deploy.sh
-scripts
 docker-compose.yml
-.gitignore
+*.md
+!README.md

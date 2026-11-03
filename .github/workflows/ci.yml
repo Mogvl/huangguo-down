@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
 
@@ -15,120 +16,126 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # GHCR 仓库名必须小写，github.repository 大小写不保证
-  IMAGE_WEB: ghcr.io/mogvl/huangguo-down-web
-  IMAGE_API: ghcr.io/mogvl/huangguo-down-api
+  # GHCR 仓库名必须小写；github.repository 的大小写不保证
+  IMAGE: ghcr.io/mogvl/huangguo-down
 
 jobs:
-  # ---------------------------------------------------------------- 语法与配置校验
+  # ---------------------------------------------------------------- 静态校验
   lint:
     name: 语法与配置校验
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: '20'
+          python-version: '3.13'
 
-      - name: Node 语法检查
+      - name: Python 语法检查
         run: |
-          node --check server.js
-          node --check lib/download.js
-          node --check scripts/check.js
-          node --check worker/index.js
-          echo "✓ 所有 JS 语法通过"
+          python -m compileall -q HGXZ
+          echo "✓ 所有 Python 文件语法通过"
 
-      - name: 校验 package.json
-        run: node -e "const p=require('./package.json');if(!p.scripts.start)throw Error('缺少 start');console.log('✓ package.json 正常')"
+      - name: Shell 脚本检查
+        run: |
+          sh -n docker/entrypoint.sh
+          bash -n deploy.sh
+          echo "✓ Shell 脚本语法通过"
 
       - name: 校验 docker-compose.yml
         run: |
           docker compose config >/dev/null
           echo "✓ docker-compose.yml 语法通过"
 
-      - name: 校验 nginx 配置
+      - name: 校验 config.example.json
         run: |
-          docker run --rm \
-            -v "$PWD/docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
-            nginx:1.27-alpine nginx -t
-          echo "✓ nginx.conf 语法通过"
+          python -c "import json;json.load(open('config.example.json'));print('✓ config.example.json 是合法 JSON')"
 
-      # 关键回归：变量形式的 proxy_pass 缺 resolver 会在容器内 502，
-      # 这类问题 nginx -t 查不出来，必须真的起容器发一次请求。
-      - name: 校验 nginx 能真正解析后端
+      - name: 校验前端引用的元素 id 都存在
         run: |
-          docker network create hgtest >/dev/null
-          docker run -d --name api --network hgtest \
-            -e PORT=7732 -e SERVE_STATIC=0 \
-            -v "$PWD:/app" -w /app node:20-alpine node server.js
-          docker run -d --name web --network hgtest -p 7731:80 \
-            -v "$PWD/public:/usr/share/nginx/html:ro" \
-            -v "$PWD/docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
-            nginx:1.27-alpine
-          ok=0
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:7731/api/ >/dev/null 2>&1; then ok=1; break; fi
-            sleep 2
-          done
-          docker logs web 2>&1 | tail -20
-          docker rm -f web api >/dev/null 2>&1 || true
-          docker network rm hgtest >/dev/null 2>&1 || true
-          [ "$ok" = "1" ] || { echo "✗ nginx 无法访问后端（502）"; exit 1; }
-          echo "✓ nginx → api 反代链路正常"
+          python - <<'PY'
+          import re, sys
+          html = open('HGXZ/web/static/index.html', encoding='utf-8').read()
+          ids = set(re.findall(r'id="([^"]+)"', html))
+          used = set(re.findall(r"getElementById\('([^']+)'\)", html))
+          missing = sorted(used - ids)
+          if missing:
+              print('缺失的元素 id:', missing)
+              sys.exit(1)
+          print(f'✓ {len(used)} 个 getElementById 引用全部存在')
+          PY
 
-  # ---------------------------------------------------------------- 接口冒烟测试
+  # ---------------------------------------------------------------- 启动冒烟
   smoke:
-    name: 接口冒烟测试
+    name: 容器启动冒烟测试
     runs-on: ubuntu-latest
     needs: lint
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: 构建镜像
+        run: docker build -t hgxz:ci .
 
-      - name: 启动服务
+      - name: 启动容器
         run: |
-          SERVE_STATIC=1 PORT=7732 node server.js > /tmp/server.log 2>&1 &
+          docker run -d --name hgxz-ci \
+            -p 7731:7731 -p 7732:7732 \
+            -e HGXZ_SYNC_ON_START=0 \
+            -e TZ=Asia/Shanghai \
+            -e UMASK=000 \
+            hgxz:ci
           for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:7732/healthz >/dev/null; then
-              echo "✓ 服务已就绪"
-              break
+            if curl -fsS --max-time 2 http://127.0.0.1:7731/healthz >/dev/null 2>&1; then
+              echo "✓ 前端在 ${i}s 后就绪"; break
             fi
             sleep 1
+            [ "$i" = 30 ] && { echo "前端未在 30s 内就绪"; docker logs hgxz-ci; exit 1; }
           done
-          curl -sf http://127.0.0.1:7732/healthz
 
-      - name: 运行自检
-        run: node scripts/check.js http://127.0.0.1:7732
+      - name: 验证前端端口
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7731/)
+          [ "$code" = "200" ] || { echo "前端返回 $code"; exit 1; }
+          echo "✓ 7731 返回 200"
 
-      - name: 失败时输出日志
-        if: failure()
-        run: cat /tmp/server.log
+      - name: 验证后端端口
+        run: |
+          body=$(curl -fsS http://127.0.0.1:7732/healthz)
+          echo "$body" | grep -q '"status":"ok"' || { echo "后端响应异常: $body"; exit 1; }
+          echo "✓ 7732 /healthz 正常：$body"
 
-  # ---------------------------------------------------------------- 构建并推送镜像
+      - name: 验证后端不带页面
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7732/)
+          [ "$code" = "404" ] || { echo "后端 / 返回 $code，预期 404"; exit 1; }
+          echo "✓ 7732 不提供页面（404）"
+
+      - name: 验证 API 可用
+        run: |
+          curl -fsS http://127.0.0.1:7732/api/dashboard | grep -q '"albums"' || exit 1
+          echo "✓ /api/dashboard 正常"
+
+      - name: 验证容器日志无异常
+        run: |
+          docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
+          grep -qiE 'traceback|error|critical' /tmp/ci.log && {
+            echo "日志中出现异常"; exit 1; }
+          echo "✓ 日志干净"
+
+      - name: 清理
+        if: always()
+        run: docker rm -f hgxz-ci || true
+
+  # ---------------------------------------------------------------- 发布镜像
   publish:
-    name: 构建并推送镜像
+    name: 推送 GHCR 镜像
     runs-on: ubuntu-latest
-    needs: [lint, smoke]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: web
-            dockerfile: docker/web.Dockerfile
-            image: ghcr.io/mogvl/huangguo-down-web
-          - name: api
-            dockerfile: docker/api.Dockerfile
-            image: ghcr.io/mogvl/huangguo-down-api
+    needs: smoke
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
@@ -139,50 +146,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 构建并推送
+      - name: 生成标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=sha,format=short
+
+      - name: 构建并推送（amd64 + arm64）
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ matrix.image }}:latest
-            ${{ matrix.image }}:${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  # ---------------------------------------------------------------- 用推送后的镜像验收
-  verify-images:
-    name: 验证镜像可直接部署
-    runs-on: ubuntu-latest
-    needs: publish
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 用 compose 拉取并启动（模拟 NAS 上的真实流程）
-        run: |
-          docker compose pull
-          docker compose up -d
-          ok=0
-          for i in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:7731/healthz >/dev/null 2>&1; then ok=1; break; fi
-            sleep 2
-          done
-          echo "--- 容器状态 ---"
-          docker compose ps
-          echo "--- 经 nginx 访问 API ---"
-          curl -sf http://127.0.0.1:7731/api/ | head -c 200 || true
-          echo
-          echo "--- 静态页 ---"
-          curl -sf -o /dev/null -w "index: %{http_code}\n" http://127.0.0.1:7731/ || true
-          curl -sf -o /dev/null -w "play:  %{http_code}\n" http://127.0.0.1:7731/play.html || true
-          if [ "$ok" != "1" ]; then
-            echo "✗ 镜像部署后不可用"
-            docker compose logs --tail=80
-            exit 1
-          fi
-          echo "✓ 镜像可直接部署"
-
-      - name: 清理
-        if: always()
-        run: docker compose down -v || true
+      - name: 清理旧的无标签版本
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          package-name: 'huangguo-down'
+          package-type: 'container'
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 3

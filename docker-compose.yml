@@ -1,23 +1,54 @@
 services:
-  huangguo-web:
-    image: ghcr.io/mogvl/huangguo-down-web:latest
-    container_name: huangguo-web
-    ports: ["7731:80"]
-    environment:
-      - TZ=Asia/Shanghai
+  hgxz:
+    # 优先用 GHCR 上的预构建镜像（CI 推送，多架构）。
+    # 本地想从源码构建：跑 ./deploy.sh build，或把 image 注释掉后 docker compose build
+    image: ghcr.io/mogvl/huangguo-down:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: huangguo-down
     restart: unless-stopped
-    depends_on:
-      - huangguo-api
 
-  # 后端：解析上游站点、解密封面、代理 HLS 分片、处理整集下载
-  # 不对外映射端口，只被 huangguo-web 通过容器网络调用
-  huangguo-api:
-    image: ghcr.io/mogvl/huangguo-down-api:latest
-    container_name: huangguo-api
+    ports:
+      # 前端 WebUI
+      - "7731:7731"
+      # 后端 API（只跑接口，无页面）。不需要外部直连就整段注释掉
+      - "7732:7732"
+
     environment:
-      - TZ=Asia/Shanghai
-      - PORT=7732
-      - HOST=0.0.0.0
-      # 静态页由 huangguo-web 提供，这里只跑 API
-      - SERVE_STATIC=0
-    restart: unless-stopped
+      TZ: Asia/Shanghai
+      # 每日自动同步时间（HH:MM，24 小时制）
+      SCHEDULE: "03:30"
+      # 启动时立刻同步一次；设 0 则只在定时点跑
+      HGXZ_SYNC_ON_START: "1"
+      # 前端 / 后端端口
+      HGXZ_PORT: "7731"
+      HGXZ_API_PORT: "7732"
+      # NAS 共享目录需要宽松权限，否则 Emby/Jellyfin 读不到文件
+      UMASK: "000"
+      # 可选：WebUI 共享口令，留空则不鉴权（仅建议内网使用）
+      HGXZ_WEB_TOKEN: ""
+      # 可选：站点需要代理时取消注释，改成局域网里的真实代理地址
+      # HTTP_PROXY: "http://192.168.1.10:7890"
+      # HTTPS_PROXY: "http://192.168.1.10:7890"
+      # NO_PROXY: "127.0.0.1,localhost"
+
+    volumes:
+      # ↓↓↓ 把下面四个宿主机路径改成你绿联 NAS 上的真实路径 ↓↓↓
+      - /volume1/docker/huangguo-down/config:/config
+      - /volume1/docker/huangguo-down/data:/data
+      - /volume1/docker/huangguo-down/logs:/logs
+      - /volume1/media/黄果:/media
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7731/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

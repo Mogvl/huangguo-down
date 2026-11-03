@@ -1,0 +1,44 @@
+{
+  "site": {
+    "base_url": "https://huangguoai.com",
+    "backup_urls": [
+      "https://l5f9m.rxzfszht.cc",
+      "https://blolhh.rxzfszht.cc",
+      "https://mxz58.rxzfszht.cc",
+      "https://owfv.rxzfszht.cc",
+      "https://zd43td.rxzfszht.cc",
+      "https://qp0h.rxzfszht.cc",
+      "https://olci.rxzfszht.cc",
+      "https://j5rs.rxzfszht.cc",
+      "https://lhsb.rxzfszht.cc"
+    ],
+    "request_interval": 2,
+    "timeout": 30,
+    "categories": [
+      {
+        "name": "AI成人短剧",
+        "path": "/ai-duanju/",
+        "library": "AI成人短剧"
+      },
+      {
+        "name": "AI成人漫剧",
+        "path": "/ai-manju/",
+        "library": "AI成人漫剧"
+      }
+    ]
+  },
+  "download": {
+    "root": "/media",
+    "retries": 3,
+    "minimum_duration": 3,
+    "recheck_days": 7,
+    "failure_cooldown_hours": 24,
+    "episode_timeout": 1800
+  },
+  "state": {
+    "database": "/data/state.sqlite3"
+  },
+  "log": {
+    "directory": "/logs"
+  }
+}
