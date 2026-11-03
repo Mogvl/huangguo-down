@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>排行榜 · 黄果解析</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><a class="mark" href="index.html">黄</a><div><a class="home-link" href="index.html"><strong>黄果解析</strong></a><small>排行榜</small></div></div>
+  <nav class="top-nav">
+    <a href="index.html">全部剧集</a>
+    <a class="active" href="ranks.html">排行榜</a>
+    <a href="topics.html">专辑专题</a>
+    <a href="chigua.html">黄果吃瓜</a>
+    <a href="api.html">接口</a>
+    <a href="https://huangguoai.com" target="_blank" rel="noreferrer">官方站 ↗</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero compact">
+    <div class="eyebrow">RANKS · 排行榜</div>
+    <h1>榜单</h1>
+    <p>热播榜、推荐榜、潜力榜，每页 50 条。</p>
+  </section>
+
+  <section class="panel" id="sec-ranks">
+    <div class="panel-head">
+      <div><span class="section-label">RANKS</span><h2 id="heading">热播榜</h2></div>
+      <div class="chips" id="rank-tabs"></div>
+    </div>
+    <div id="status" class="status">加载中…</div>
+    <section id="grid" class="grid"></section>
+    <div class="load-more" id="load-more"></div>
+  </section>
+</main>
+
+<footer>内容来自公开站点，仅作技术演示。请遵守当地法律法规与版权规则。</footer>
+
+<script src="app.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const STATE = { rank: 'hot', page: 0, pages: 1, total: 0, loading: false };
+const RANK_LABEL = { hot: '热播榜', recommend: '推荐榜', potential: '潜力榜' };
+
+async function loadPage(reset) {
+  if (STATE.loading) return;
+  if (!reset && STATE.page >= STATE.pages) return;
+  STATE.loading = true;
+  const grid = $('#grid');
+  setStatus($('#status'), '加载中…');
+  try {
+    const next = reset ? 1 : STATE.page + 1;
+    const d = await api('/ranks/' + STATE.rank + '?page=' + next + '&size=' + PAGE_SIZE);
+    const list = d.list || [];
+    STATE.page = d.page || next;
+    STATE.pages = d.pagecount || 1;
+    STATE.total = d.total || list.length;
+    if (reset) grid.innerHTML = '';
+    grid.insertAdjacentHTML('beforeend', gridHtml(list));
+    bindCards(grid);
+    setStatus($('#status'), `共 ${STATE.total} 条 · 已显示 ${grid.querySelectorAll('.card').length} 条 · 第 ${STATE.page}/${STATE.pages} 页`);
+    $('#load-more').innerHTML = STATE.page >= STATE.pages ? '<div class="done">已加载全部内容</div>' : '<button id="more">加载更多（50 条）</button>';
+    const more = $('#more');
+    if (more) more.onclick = () => loadPage(false);
+  } catch (e) {
+    setStatus($('#status'), '加载失败，请稍后重试。');
+  } finally {
+    STATE.loading = false;
+  }
+}
+function reset() { STATE.page = 0; STATE.pages = 1; loadPage(true); }
+
+window.addEventListener('scroll', () => {
+  if (STATE.loading || STATE.page >= STATE.pages) return;
+  if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 700) loadPage(false);
+});
+
+chips($('#rank-tabs'), RANK_TABS, STATE.rank, (v) => { STATE.rank = v; $('#heading').textContent = RANK_LABEL[v] || v; reset(); });
+reset();
+</script>
+</body>
+</html>

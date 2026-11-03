@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>专辑专题 · 黄果解析</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><a class="mark" href="index.html">黄</a><div><a class="home-link" href="index.html"><strong>黄果解析</strong></a><small>专辑专题</small></div></div>
+  <nav class="top-nav">
+    <a href="index.html">全部剧集</a>
+    <a href="ranks.html">排行榜</a>
+    <a class="active" href="topics.html">专辑专题</a>
+    <a href="chigua.html">黄果吃瓜</a>
+    <a href="api.html">接口</a>
+    <a href="https://huangguoai.com" target="_blank" rel="noreferrer">官方站 ↗</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero compact">
+    <div class="eyebrow">TOPICS · 专辑专题</div>
+    <h1>专辑专题</h1>
+    <p>按题材聚合的专题专辑，点击进入查看专辑内剧集。</p>
+  </section>
+
+  <section class="panel" id="sec-topics">
+    <div class="panel-head">
+      <div><span class="section-label">TOPICS</span><h2 id="heading">全部专辑</h2></div>
+      <div class="chips" id="topic-tabs"></div>
+    </div>
+    <div id="status" class="status">加载中…</div>
+    <section id="grid" class="grid"></section>
+    <div class="load-more" id="load-more"></div>
+  </section>
+</main>
+
+<footer>内容来自公开站点，仅作技术演示。请遵守当地法律法规与版权规则。</footer>
+
+<script src="app.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const STATE = { slug: '', title: '', page: 0, pages: 1, total: 0, loading: false, topics: [] };
+
+async function loadPage(reset) {
+  if (STATE.loading) return;
+  if (!reset && STATE.page >= STATE.pages) return;
+  STATE.loading = true;
+  const grid = $('#grid');
+  setStatus($('#status'), '加载中…');
+  try {
+    const next = reset ? 1 : STATE.page + 1;
+    const d = STATE.slug
+      ? await api('/topics?slug=' + encodeURIComponent(STATE.slug) + '&page=' + next + '&size=' + PAGE_SIZE)
+      : await api('/topics?size=' + PAGE_SIZE);
+    const list = d.list || [];
+    STATE.page = d.page || next;
+    STATE.pages = d.pagecount || 1;
+    STATE.total = d.total || list.length;
+    if (reset) grid.innerHTML = '';
+    if (!list.length && reset) grid.innerHTML = '<div class="empty">暂无专辑</div>';
+    else grid.insertAdjacentHTML('beforeend', gridHtml(list));
+    bindCards(grid);
+    setStatus($('#status'), `共 ${STATE.total} 部 · 已显示 ${grid.querySelectorAll('.card').length} 部 · 第 ${STATE.page}/${STATE.pages} 页`);
+    $('#load-more').innerHTML = STATE.page >= STATE.pages ? '<div class="done">已加载全部内容</div>' : '<button id="more">加载更多（50 部）</button>';
+    const more = $('#more');
+    if (more) more.onclick = () => loadPage(false);
+  } catch (e) {
+    setStatus($('#status'), '加载失败，请稍后重试。');
+  } finally {
+    STATE.loading = false;
+  }
+}
+function reset() { STATE.page = 0; STATE.pages = 1; loadPage(true); }
+
+window.addEventListener('scroll', () => {
+  if (STATE.loading || STATE.page >= STATE.pages) return;
+  if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 700) loadPage(false);
+});
+
+async function init() {
+  try {
+    const d = await api('/topics');
+    STATE.topics = d.list || [];
+  } catch (e) { STATE.topics = []; }
+  const items = [{ n: '全部专辑', v: '' }].concat(STATE.topics.map((t) => ({ n: t.vod_name, v: t.vod_id.replace('topic_', '') })));
+  const urlSlug = new URLSearchParams(location.search).get('slug') || '';
+  STATE.slug = urlSlug;
+  chips($('#topic-tabs'), items, urlSlug, (v) => {
+    STATE.slug = v;
+    const found = STATE.topics.find((t) => t.vod_id === 'topic_' + v);
+    $('#heading').textContent = v ? (found ? found.vod_name : v) : '全部专辑';
+    const u = new URL(location.href);
+    if (v) u.searchParams.set('slug', v); else u.searchParams.delete('slug');
+    history.replaceState(null, '', u);
+    reset();
+  });
+  const found = STATE.topics.find((t) => t.vod_id === 'topic_' + urlSlug);
+  $('#heading').textContent = urlSlug ? (found ? found.vod_name : urlSlug) : '全部专辑';
+  reset();
+}
+init();
+</script>
+</body>
+</html>

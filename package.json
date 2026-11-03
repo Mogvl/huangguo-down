@@ -1,0 +1,19 @@
+{
+  "name": "huangguo-down",
+  "version": "1.1.0",
+  "private": true,
+  "description": "黄果短剧解析站 · 前后端分离 Docker 版（前端 7731 / 后端 7732）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "SERVE_STATIC=1 PORT=7732 node server.js",
+    "check": "node scripts/check.js",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>接口列表 · 黄果解析</title>
+<link rel="stylesheet" href="style.css">
+<style>.api-row.is-static{opacity:.62;cursor:default}</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><a class="mark" href="index.html">黄</a><div><a class="home-link" href="index.html"><strong>黄果解析</strong></a><small>接口列表</small></div></div>
+  <nav class="top-nav">
+    <a href="index.html">全部剧集</a>
+    <a href="ranks.html">排行榜</a>
+    <a href="topics.html">专辑专题</a>
+    <a href="chigua.html">黄果吃瓜</a>
+    <a class="active" href="api.html">接口</a>
+    <a href="https://huangguoai.com" target="_blank" rel="noreferrer">官方站 ↗</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero compact">
+    <div class="eyebrow">API · 接口列表</div>
+    <h1>可用接口</h1>
+    <p>Cloudflare Worker 提供的全部接口。点击任一行可直接在新标签打开测试。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><span class="section-label">ENDPOINTS</span><h2>接口一览</h2></div></div>
+    <div class="api-list" id="api-list"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><div><span class="section-label">SOURCE</span><h2>数据源说明</h2></div></div>
+    <ul class="notes">
+      <li>优先使用黄果官方 JSON 接口，HTML 抓取仅作兜底，响应中的 <code>source</code> 字段标明来源。</li>
+      <li>封面为 AES-CBC 加密的原始二进制，由 <code>/media</code> 解密后返回。</li>
+      <li>m3u8 为 AES-128 加密切片，由 <code>/raw</code> 代理并重写分片与密钥地址。</li>
+      <li>浏览器不支持原生 HLS，播放器库由 <code>/hls.js</code> 代理提供。</li>
+    </ul>
+  </section>
+</main>
+
+<footer>内容来自公开站点，仅作技术演示。请遵守当地法律法规与版权规则。</footer>
+
+<script src="app.js"></script>
+<script>
+const API_DOCS = [
+  ['GET', '/api/', '服务状态 + 分类与排序枚举'],
+  ['GET', '/api/categories', '分类、排序、榜单、吃瓜枚举'],
+  ['GET', '/api/all', '首页聚合（推荐+榜单+话题+吃瓜）'],
+  ['GET', '/api/category/ai-duanju?page=1&size=50&sort=latest', '分类列表（可改 tid/sort）'],
+  ['GET', '/api/category/ai-manju?page=1&size=50', 'AI成人漫剧'],
+  ['GET', '/api/category/ai-huanlian?page=1&size=50', 'AI换脸'],
+  ['GET', '/api/category/ai-mogai?page=1&size=50', 'AI魔改'],
+  ['GET', '/api/ranks/hot?page=1&size=50', '排行榜，type=hot/recommend/potential'],
+  ['GET', '/api/topics', '话题专辑列表'],
+  ['GET', '/api/topics?slug=hot-aiduanju&size=50', '话题专辑内视频'],
+  ['GET', '/api/chigua?cate=all&page=1&size=50', '黄果吃瓜，cate=all/remen/yuanchuang'],
+  ['GET', '/api/search/东京?page=1&size=50', '搜索'],
+  ['GET', '/api/detail/5667', '详情 + 剧集列表'],
+  ['GET', '/api/play?url=https://huangguoai.com/video/5667/&ep=1', '解析 m3u8 播放地址'],
+  ['GET', '/media?url={封面地址}', '封面解密代理'],
+  ['GET', '/raw?url={m3u8 地址}', 'HLS 分片与密钥代理'],
+  ['GET', '/hls.js', '播放器库代理'],
+  ['GET', '/download?url={页面地址}&ep=1', '下载整集（服务端取流+解密+拼接，直接存 ts）'],
+  ['GET', '/download?url={页面地址}&ep=1&probe=1', '下载前探针：返回分片数、时长、文件名，不实际传输']
+];
+const list = document.getElementById('api-list');
+// 带 {占位符} 的示例无法直接点开（原版会生成 ?url= 这样的空参数链接，必然 400），
+// 这类只展示不可点；其余正常生成可点击链接。
+list.innerHTML = API_DOCS.map((d) => {
+  const hasPlaceholder = /\{.*?\}/.test(d[1]);
+  const body = `<span class="m">${d[0]}</span><code>${esc(d[1])}</code><span class="d">${esc(d[2])}</span>`;
+  if (hasPlaceholder) {
+    return `<div class="api-row is-static" title="需要填入真实参数">${body}</div>`;
+  }
+  return `<a class="api-row" href="${esc(API_BASE + d[1])}" target="_blank" rel="noreferrer">${body}</a>`;
+}).join('');
+</script>
+</body>
+</html>
