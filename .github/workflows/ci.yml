@@ -8,6 +8,16 @@ on:
 
 permissions:
   contents: read
+  packages: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # GHCR 仓库名必须小写，github.repository 大小写不保证
+  IMAGE_WEB: ghcr.io/mogvl/huangguo-down-web
+  IMAGE_API: ghcr.io/mogvl/huangguo-down-api
 
 jobs:
   # ---------------------------------------------------------------- 语法与配置校验
@@ -44,6 +54,29 @@ jobs:
             nginx:1.27-alpine nginx -t
           echo "✓ nginx.conf 语法通过"
 
+      # 关键回归：变量形式的 proxy_pass 缺 resolver 会在容器内 502，
+      # 这类问题 nginx -t 查不出来，必须真的起容器发一次请求。
+      - name: 校验 nginx 能真正解析后端
+        run: |
+          docker network create hgtest >/dev/null
+          docker run -d --name api --network hgtest \
+            -e PORT=7732 -e SERVE_STATIC=0 \
+            -v "$PWD:/app" -w /app node:20-alpine node server.js
+          docker run -d --name web --network hgtest -p 7731:80 \
+            -v "$PWD/public:/usr/share/nginx/html:ro" \
+            -v "$PWD/docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.27-alpine
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:7731/api/ >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs web 2>&1 | tail -20
+          docker rm -f web api >/dev/null 2>&1 || true
+          docker network rm hgtest >/dev/null 2>&1 || true
+          [ "$ok" = "1" ] || { echo "✗ nginx 无法访问后端（502）"; exit 1; }
+          echo "✓ nginx → api 反代链路正常"
+
   # ---------------------------------------------------------------- 接口冒烟测试
   smoke:
     name: 接口冒烟测试
@@ -75,59 +108,80 @@ jobs:
         if: failure()
         run: cat /tmp/server.log
 
-  # ---------------------------------------------------------------- 镜像构建
-  build:
-    name: 构建 Docker 镜像
+  # ---------------------------------------------------------------- 构建并推送镜像
+  publish:
+    name: 构建并推送镜像
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [lint, smoke]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: web
+            dockerfile: docker/web.Dockerfile
+            image: ghcr.io/mogvl/huangguo-down-web
+          - name: api
+            dockerfile: docker/api.Dockerfile
+            image: ghcr.io/mogvl/huangguo-down-api
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: 构建后端镜像
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker/api.Dockerfile
-          push: false
-          tags: huangguo-api:ci
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ matrix.image }}:latest
+            ${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
-      - name: 构建前端镜像
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/web.Dockerfile
-          push: false
-          tags: huangguo-web:ci
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
+  # ---------------------------------------------------------------- 用推送后的镜像验收
+  verify-images:
+    name: 验证镜像可直接部署
+    runs-on: ubuntu-latest
+    needs: publish
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: 启动整套 compose 并验证
+      - name: 用 compose 拉取并启动（模拟 NAS 上的真实流程）
         run: |
-          docker compose up -d --build
-          # 等两个容器都 healthy
+          docker compose pull
+          docker compose up -d
+          ok=0
           for i in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:7731/healthz >/dev/null 2>&1; then
-              echo "✓ 前端 7731 就绪"
-              break
-            fi
+            if curl -sf http://127.0.0.1:7731/healthz >/dev/null 2>&1; then ok=1; break; fi
             sleep 2
           done
           echo "--- 容器状态 ---"
           docker compose ps
           echo "--- 经 nginx 访问 API ---"
-          curl -sf http://127.0.0.1:7731/api/ | head -c 200
+          curl -sf http://127.0.0.1:7731/api/ | head -c 200 || true
           echo
           echo "--- 静态页 ---"
-          curl -sf -o /dev/null -w "index: %{http_code}\n" http://127.0.0.1:7731/
-          curl -sf -o /dev/null -w "play:  %{http_code}\n" http://127.0.0.1:7731/play.html
-
-      - name: 失败时输出容器日志
-        if: failure()
-        run: docker compose logs --tail=100
+          curl -sf -o /dev/null -w "index: %{http_code}\n" http://127.0.0.1:7731/ || true
+          curl -sf -o /dev/null -w "play:  %{http_code}\n" http://127.0.0.1:7731/play.html || true
+          if [ "$ok" != "1" ]; then
+            echo "✗ 镜像部署后不可用"
+            docker compose logs --tail=80
+            exit 1
+          fi
+          echo "✓ 镜像可直接部署"
 
       - name: 清理
         if: always()

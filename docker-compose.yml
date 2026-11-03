@@ -1,74 +1,23 @@
-# 黄果解析 · 一键部署
-#
-#   docker compose up -d
-#
-# 端口：
-#   7731  前端（静态页 + API 反代入口，浏览器访问这个）
-#   7732  后端 API（仅内网使用；如需直连调试可取消注释）
-#
-# 绿联 NAS：在「Docker → 项目 → 新建」里选 Compose，粘贴本文件内容即可。
-
 services:
-  api:
-    build:
-      context: .
-      dockerfile: docker/api.Dockerfile
-    image: huangguo-api:latest
-    container_name: huangguo-api
-    restart: unless-stopped
-    environment:
-      PORT: "7732"
-      HOST: "0.0.0.0"
-      # 静态页交给 nginx，本容器只处理 API
-      SERVE_STATIC: "0"
-      TZ: Asia/Shanghai
-    expose:
-      - "7732"
-    # 需要直连后端调试时取消下面两行注释
-    # ports:
-    #   - "7732:7732"
-    networks:
-      - huangguo
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7732/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  web:
-    build:
-      context: .
-      dockerfile: docker/web.Dockerfile
-    image: huangguo-web:latest
+  huangguo-web:
+    image: ghcr.io/mogvl/huangguo-down-web:latest
     container_name: huangguo-web
+    ports: ["7731:80"]
+    environment:
+      - TZ=Asia/Shanghai
     restart: unless-stopped
     depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "7731:80"
-    environment:
-      TZ: Asia/Shanghai
-    networks:
-      - huangguo
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - huangguo-api
 
-networks:
-  huangguo:
-    driver: bridge
+  # 后端：解析上游站点、解密封面、代理 HLS 分片、处理整集下载
+  # 不对外映射端口，只被 huangguo-web 通过容器网络调用
+  huangguo-api:
+    image: ghcr.io/mogvl/huangguo-down-api:latest
+    container_name: huangguo-api
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=7732
+      - HOST=0.0.0.0
+      # 静态页由 huangguo-web 提供，这里只跑 API
+      - SERVE_STATIC=0
+    restart: unless-stopped

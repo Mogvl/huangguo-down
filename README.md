@@ -12,13 +12,41 @@
 
 ## 一、快速开始
 
+镜像已发布到 GHCR，**NAS 上不需要构建、不需要拉源码**，只要有 compose 文件即可。
+
 ### 绿联 NAS（UGREEN）
 
 1. 打开 **Docker** → **项目** → **新建项目**
-2. 项目名称填 `huangguo`，选择「**Compose**」方式
-3. 把本仓库的 `docker-compose.yml` 内容整段粘贴进去
-4. 点「部署」，等待两个容器变为 healthy
+2. 项目名称填 `huangguo`
+3. 选择「**Compose**」方式，把下面内容整段粘贴进去
+4. 点「部署」，等两个容器变为 running
 5. 浏览器访问 `http://你的NAS_IP:7731/`
+
+```yaml
+services:
+  huangguo-web:
+    image: ghcr.io/mogvl/huangguo-down-web:latest
+    container_name: huangguo-web
+    ports: ["7731:80"]
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
+    depends_on:
+      - huangguo-api
+
+  # 后端：解析上游站点、解密封面、代理 HLS 分片、处理整集下载
+  # 不对外映射端口，只被 huangguo-web 通过容器网络调用
+  huangguo-api:
+    image: ghcr.io/mogvl/huangguo-down-api:latest
+    container_name: huangguo-api
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=7732
+      - HOST=0.0.0.0
+      # 静态页由 huangguo-web 提供，这里只跑 API
+      - SERVE_STATIC=0
+    restart: unless-stopped
+```
 
 ### 任意 Linux / macOS（命令行）
 
@@ -28,15 +56,16 @@ cd huangguo-down
 ./deploy.sh
 ```
 
-脚本会自动检查端口、构建镜像、启动服务，并等到服务真正可用后才报告成功。
+脚本会自动拉取镜像、启动服务，并等到服务真正可用后才报告成功。
 
-### 群晖 / 其他
+### 镜像说明
 
-把整个目录放到 NAS 上，SSH 进去执行：
+| 镜像 | 基础镜像 | 说明 |
+|---|---|---|
+| `ghcr.io/mogvl/huangguo-down-web` | nginx:1.27-alpine | 静态页 + API 反代 |
+| `ghcr.io/mogvl/huangguo-down-api` | node:20-alpine | 解析核心 + 下载服务 |
 
-```bash
-docker compose up -d
-```
+两个镜像都带 `latest` 与 `sha` 双标签，公开可匿名拉取。
 
 ---
 
@@ -68,7 +97,8 @@ docker compose up -d
 ./deploy.sh status     # 查看状态
 ./deploy.sh restart    # 重启
 ./deploy.sh stop       # 停止
-./deploy.sh update     # 拉取最新代码并重建
+./deploy.sh update     # 拉取最新镜像并重建
+./deploy.sh build      # 从源码本地构建（改代码自测用）
 ```
 
 或直接用 compose：
@@ -155,15 +185,24 @@ npm run check      # 自检 19 项
 
 ## 七、CI
 
-`.github/workflows/ci.yml` 在每次 push 到 `main` 时执行三个 job：
+`.github/workflows/ci.yml` 在 push 到 `main` 时执行四个 job：
 
 | Job | 内容 |
 |---|---|
-| `lint` | JS 语法、package.json、docker-compose.yml、nginx.conf 校验 |
-| `smoke` | 启动服务并跑 19 项自检（真实访问上游站点） |
-| `build` | 构建两个镜像，`docker compose up` 后用 curl 验证 7731 可用 |
+| `lint` | JS 语法、package.json、docker-compose.yml、nginx.conf 校验，**并实起容器验证反代链路** |
+| `smoke` | 启动服务跑 19 项自检（真实访问上游站点） |
+| `publish` | 构建两个镜像并推送到 GHCR（`latest` + `sha`） |
+| `verify-images` | 用 compose 拉取刚推送的镜像启动，验证 7731 可用 |
 
-`build` job 会实际起一套完整环境，验证 nginx → API 的反代链路，失败时自动打印容器日志。
+`verify-images` 是关键一环：它模拟 NAS 上的真实流程（`compose pull` → `up -d`），
+确认推上去的镜像**真的能一键部署**，而不是只在构建阶段能跑。
+
+### 为什么 lint 里要起容器
+
+nginx 配置有个隐蔽问题：用 `set $backend` + `proxy_pass $backend` 时，
+如果没配 `resolver`，容器内会报 `no resolver defined to resolve api` 并直接 **502**。
+这种错误 `nginx -t` 完全查不出来（语法是对的），必须真的发一次请求才会暴露。
+所以 lint job 里单独起了一个 api + web 的临时网络做真实反代验证。
 
 ---
 
@@ -203,5 +242,6 @@ huangguo-down/
 - **必须能访问 `huangguoai.com`**：数据实时抓取，不是本地快照
 - **`/download` 单集 100~200 MB**：注意 NAS 存储空间；nginx 已关闭该路径的缓冲，不会先落盘到临时目录
 - **`Host` 头必须带端口**：nginx 配置里用的是 `$http_host` 而非 `$host`，否则 `/raw` 重写出的分片地址会丢端口导致播放失败
+- **后端地址用 `resolver 127.0.0.11` 动态解析**：Docker 内置 DNS。不能用 `upstream` 块写死服务名，因为 nginx 只在启动时解析一次，后端容器重建换 IP 后会永久 502
 - **上游改版会失效**：解析依赖页面结构，源站改版后需更新 `worker/index.js`
 - 分片地址带 `auth_key` 签名，有效期约 1~2 小时

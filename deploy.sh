@@ -46,8 +46,8 @@ case "$CMD" in
     done
     ok "端口检查完成"
 
-    info "构建镜像（首次约 1-2 分钟）"
-    $DC build
+    info "拉取镜像（ghcr.io）"
+    $DC pull
 
     info "启动服务"
     $DC up -d
@@ -102,8 +102,9 @@ case "$CMD" in
     else
       warn "当前目录不是 git 仓库，跳过拉取"
     fi
-    info "重新构建并启动"
-    $DC up -d --build
+    info "拉取最新镜像并重建"
+    $DC pull
+    $DC up -d
     ok "更新完成"
     ;;
 
@@ -111,8 +112,16 @@ case "$CMD" in
     $DC ps
     ;;
 
+  # 从源码本地构建（不依赖 GHCR），适合改代码后自测
+  build)
+    info "从源码本地构建镜像"
+    $DC build
+    $DC up -d
+    ok "本地构建并启动完成"
+    ;;
+
   *)
-    echo "用法: $0 [up|logs|stop|restart|update|status]"
+    echo "用法: $0 [up|logs|stop|restart|update|status|build]"
     exit 1
     ;;
 esac
