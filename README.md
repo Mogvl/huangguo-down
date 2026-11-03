@@ -8,24 +8,136 @@
 
 ## 一键部署（绿联 NAS）
 
-SSH 进 NAS，在仓库目录执行：
+整个部署只需要**一个文件**：`docker-compose.yml`。它引用 CI 已构建好的多架构镜像，目录里不需要源码、不需要 Dockerfile。
+
+### 第一步：创建目录
+
+SSH 登录 NAS 后执行（路径可按需改）：
 
 ```bash
+mkdir -p /volume1/docker/huangguo-down/{config,data,logs}
+mkdir -p /volume1/media/黄果
+```
+
+> 绿联的共享文件夹一般在 `/volume1`、`/volume2` 下。不确定的话用 `df -h` 或 `ls /volume1` 看一下实际名字。
+> 先手动建目录很重要：Docker 自动创建的目录属主是 root，之后 Emby/Jellyfin 可能读不到。
+
+### 第二步：写 `docker-compose.yml`
+
+在 `/volume1/docker/huangguo-down/` 下新建 `docker-compose.yml`，内容如下（**把 `volumes` 里四个宿主机路径改成你的实际路径**）：
+
+```yaml
+services:
+  hgxz:
+    # CI 自动推送的多架构镜像（amd64 / arm64）
+    image: ghcr.io/mogvl/huangguo-down:latest
+    container_name: huangguo-down
+    restart: unless-stopped
+    ports:
+      # 前端 WebUI
+      - "7731:7731"
+      # 后端 API（只跑接口，无页面）。不需要外部直连就整段注释掉
+      - "7732:7732"
+    environment:
+      TZ: Asia/Shanghai
+      # 每日自动同步时间（HH:MM，24 小时制）
+      SCHEDULE: "03:30"
+      # 启动时立刻同步一次；设 0 则只在定时点跑
+      HGXZ_SYNC_ON_START: "1"
+      # 前端 / 后端端口
+      HGXZ_PORT: "7731"
+      HGXZ_API_PORT: "7732"
+      # NAS 共享目录需要宽松权限，否则 Emby/Jellyfin 读不到文件
+      UMASK: "000"
+      # 可选：WebUI 共享口令，留空则不鉴权（仅建议内网使用）
+      HGXZ_WEB_TOKEN: ""
+      # 可选：站点需要代理时取消注释，改成局域网里的真实代理地址
+      # HTTP_PROXY: "http://192.168.1.10:7890"
+      # HTTPS_PROXY: "http://192.168.1.10:7890"
+      # NO_PROXY: "127.0.0.1,localhost"
+    volumes:
+      # ↓↓↓ 把下面四个宿主机路径改成你 NAS 上的真实路径 ↓↓↓
+      - /volume1/docker/huangguo-down/config:/config
+      - /volume1/docker/huangguo-down/data:/data
+      - /volume1/docker/huangguo-down/logs:/logs
+      - /volume1/media/黄果:/media
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7731/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+懒得手写就直接下载：
+
+```bash
+cd /volume1/docker/huangguo-down
+curl -O https://raw.githubusercontent.com/Mogvl/huangguo-down/main/docker-compose.yml
+```
+
+### 第三步：启动
+
+```bash
+cd /volume1/docker/huangguo-down
+docker compose up -d
+```
+
+或者用绿联图形界面：Docker → **项目（Project）** → 新建 → 粘贴上面的 compose 内容 → 部署。
+
+### 第四步：验证
+
+```bash
+curl http://127.0.0.1:7731/healthz   # 前端
+curl http://127.0.0.1:7732/healthz   # 后端
+# {"status":"ok","version":"1.1.0-nas","ready":true}
+```
+
+浏览器打开 `http://<NAS的IP>:7731`。
+
+### 常用运维
+
+```bash
+docker compose logs -f          # 跟踪日志
+docker compose restart          # 重启
+docker compose pull && docker compose up -d   # 更新到最新镜像
+docker compose down             # 停止并移除容器
+```
+
+### 用 deploy.sh（可选，功能等价）
+
+克隆仓库后可以用脚本，它把上面的步骤自动化了：
+
+```bash
+git clone git@github.com:Mogvl/huangguo-down.git
+cd huangguo-down
 ./deploy.sh
 ```
 
-脚本会自动：检查 Docker → 创建数据目录 → 构建镜像 → 启动容器 → 打印访问地址。首次构建约 3-8 分钟。
+脚本会检查 Docker、建数据目录、判断该构建还是拉镜像、启动并打印地址。其他命令：`logs` / `status` / `restart` / `stop` / `down` / `update` / `clean`。
 
-也可以直接用 GHCR 预构建镜像（CI 自动推送，支持 amd64/arm64）：
+数据目录想改：`DATA_ROOT=/volume2/xxx MEDIA_ROOT=/volume2/yyy ./deploy.sh`，同时改 `docker-compose.yml` 里对应路径。
+
+### 从源码构建（可选）
 
 ```bash
-./deploy.sh pull && ./deploy.sh start
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-其他命令：`logs` / `status` / `restart` / `stop` / `down` / `update` / `clean`，直接跑 `./deploy.sh` 看帮助。
+构建配置放在单独的 `docker-compose.build.yml`，只有显式 `-f` 指定时才生效，所以默认的 compose 文件永远不需要源码。
 
-> 如果报 `pull access denied`：GHCR 包默认私有，需要先 `docker login ghcr.io -u <你的GitHub用户名>`，或在 GitHub 上把 Package 可见性改成 Public。
-> 如果报 `failed to read dockerfile`：说明用的是旧版同时带 `build` 段的 compose 文件，重新下载本仓库的 `docker-compose.yml` 即可。
+### 常见报错
+
+| 报错 | 原因 |
+|---|---|
+| `pull access denied for hgxz` | compose 里镜像名还是旧的 `hgxz:nas`，换成 `ghcr.io/mogvl/huangguo-down:latest` |
+| `failed to read dockerfile: open Dockerfile` | 用了带 `build` 段的旧 compose 文件，且目录里没有源码；用上面这份（无 `build` 段） |
+| `permission denied` 写 `/media` | 目录属主是 root；先 `mkdir` 再启动，或设 `PUID`/`PGID` |
 
 ---
 
