@@ -1,11 +1,14 @@
+# 黄果下载 · 一键部署（只用预构建镜像，不需要源码）
+#
+#   docker compose up -d
+#
+# 想从源码构建，叠加构建覆盖文件：
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+# 或者直接跑 ./deploy.sh（会自动判断）
 services:
   hgxz:
-    # 优先用 GHCR 上的预构建镜像（CI 推送，多架构）。
-    # 本地想从源码构建：跑 ./deploy.sh build，或把 image 注释掉后 docker compose build
+    # CI 自动推送的多架构镜像（amd64 / arm64）
     image: ghcr.io/mogvl/huangguo-down:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: huangguo-down
     restart: unless-stopped
 
@@ -34,7 +37,8 @@ services:
       # NO_PROXY: "127.0.0.1,localhost"
 
     volumes:
-      # ↓↓↓ 把下面四个宿主机路径改成你绿联 NAS 上的真实路径 ↓↓↓
+      # ↓↓↓ 把下面四个宿主机路径改成你 NAS 上的真实路径 ↓↓↓
+      # 目录不存在时 Docker 会自动创建，但属主是 root，建议先手动 mkdir
       - /volume1/docker/huangguo-down/config:/config
       - /volume1/docker/huangguo-down/data:/data
       - /volume1/docker/huangguo-down/logs:/logs

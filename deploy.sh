@@ -43,6 +43,14 @@ fi
 docker info >/dev/null 2>&1 || \
     die "docker 守护进程未运行，或当前用户没有权限（试试 sudo）。"
 
+# 两个组合：默认只用预构建镜像；构建时叠加 docker-compose.build.yml。
+# 分开是为了让 NAS 上只有 compose 文件、没有源码时也不会去读 Dockerfile。
+DC_BASE="$DC -f docker-compose.yml"
+DC_BUILD="$DC -f docker-compose.yml -f docker-compose.build.yml"
+
+# 有 Dockerfile 才允许本地构建
+can_build() { [ -f Dockerfile ]; }
+
 # ---------------------------------------------------------------- 数据目录
 # compose 文件里的宿主机路径必须真实存在且可写，否则 Docker 会以 root 建目录，
 # 之后 Emby 读不到。这里提前按 compose 里的映射建好。
@@ -78,19 +86,24 @@ EOF
 
 # ---------------------------------------------------------------- 动作
 do_build() {
+    can_build || die "当前目录没有 Dockerfile，无法本地构建。用 ./deploy.sh pull 拉取预构建镜像。"
     info "构建镜像（首次约 3-8 分钟）"
-    $DC build --pull
+    $DC_BUILD build --pull
     ok "镜像构建完成"
 }
 
 do_pull() {
     info "拉取预构建镜像"
-    $DC pull && ok "镜像已更新" || warn "拉取失败，改用本地构建：$0 build"
+    $DC_BASE pull && ok "镜像已更新" || {
+        warn "拉取失败。若是权限问题，先 docker login ghcr.io -u <你的GitHub用户名>"
+        warn "或在 GitHub 上把该 Package 的可见性改成 Public"
+        exit 1
+    }
 }
 
 do_up() {
     ensure_dirs
-    $DC up -d --remove-orphans
+    $DC_BASE up -d --remove-orphans
     ok "容器已启动"
     echo
     local ip
@@ -98,11 +111,11 @@ do_up() {
     [ -n "$ip" ] || ip="<NAS的IP>"
     printf '  前端  http://%s:7731\n' "$ip"
     printf '  后端  http://%s:7732/healthz\n' "$ip"
-    printf '\n  首次启动会同步一次，日志：%s logs -f\n' "$DC"
+    printf '\n  首次启动会同步一次，日志：./deploy.sh logs\n'
 }
 
 do_status() {
-    $DC ps
+    $DC_BASE ps
     echo
     info "健康检查"
     if curl -fsS --max-time 5 http://127.0.0.1:7731/healthz 2>/dev/null; then
@@ -131,7 +144,7 @@ do_clean() {
     printf '确认继续？输入 yes：'
     read -r ans
     [ "$ans" = "yes" ] || { info "已取消"; exit 0; }
-    $DC down -v --remove-orphans || true
+    $DC_BASE down -v --remove-orphans || true
     rm -rf "$DATA_ROOT/data" "$DATA_ROOT/logs" "$DATA_ROOT/config"
     ok "已清理"
 }
@@ -139,20 +152,30 @@ do_clean() {
 case "${1:-up}" in
     build)   do_build ;;
     pull)    do_pull ;;
-    up|"")   ensure_dirs; check_paths; do_build; do_up ;;
+    up|"")
+        # 有源码就本地构建（能用上最新改动），否则直接用预构建镜像。
+        ensure_dirs; check_paths
+        if can_build; then
+            info "检测到 Dockerfile，从源码构建"
+            do_build
+        else
+            info "未检测到 Dockerfile，使用预构建镜像"
+            do_pull || die "镜像拉取失败，且当前目录无法本地构建"
+        fi
+        do_up ;;
     start)   do_up ;;
-    logs)    $DC logs -f --tail=200 ;;
+    logs)    $DC_BASE logs -f --tail=200 ;;
     status|ps) do_status ;;
-    restart) $DC restart && ok "已重启" ;;
-    stop)    $DC stop && ok "已停止" ;;
-    down)    $DC down --remove-orphans && ok "已移除" ;;
+    restart) $DC_BASE restart && ok "已重启" ;;
+    stop)    $DC_BASE stop && ok "已停止" ;;
+    down)    $DC_BASE down --remove-orphans && ok "已移除" ;;
     update)  do_update ;;
     clean)   do_clean ;;
     *)
         cat <<EOF
 用法: $0 [命令]
 
-  (空) / up   构建并启动（默认）
+  (空) / up   一键部署（有源码则构建，否则拉预构建镜像）
   build       只构建镜像
   pull        拉取 GHCR 预构建镜像
   start       用已有镜像启动

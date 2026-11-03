@@ -1,0 +1,12 @@
+# 构建覆盖文件：只在需要从源码构建时使用
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# 单独 docker compose up 时不会读这个文件，所以 NAS 上只有 compose 文件、
+# 没有源码的情况下也不会再出现 "failed to read dockerfile"。
+services:
+  hgxz:
+    image: huangguo-down:local
+    build:
+      context: .
+      dockerfile: Dockerfile

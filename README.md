@@ -24,6 +24,9 @@ SSH 进 NAS，在仓库目录执行：
 
 其他命令：`logs` / `status` / `restart` / `stop` / `down` / `update` / `clean`，直接跑 `./deploy.sh` 看帮助。
 
+> 如果报 `pull access denied`：GHCR 包默认私有，需要先 `docker login ghcr.io -u <你的GitHub用户名>`，或在 GitHub 上把 Package 可见性改成 Public。
+> 如果报 `failed to read dockerfile`：说明用的是旧版同时带 `build` 段的 compose 文件，重新下载本仓库的 `docker-compose.yml` 即可。
+
 ---
 
 ## 端口与架构
@@ -64,13 +67,28 @@ SSH 进 NAS，在仓库目录执行：
 
 在绿联「应用中心」安装 **Docker** 套件。确认 SSH 可用（控制面板 → 终端机 → 启用 SSH）。
 
-### 方式一：deploy.sh（推荐）
+### 方式一：只要 compose 文件（最省事）
+
+不需要克隆整个仓库，只要两个文件：
+
+```bash
+mkdir -p /volume1/docker/huangguo-down && cd /volume1/docker/huangguo-down
+curl -O https://raw.githubusercontent.com/Mogvl/huangguo-down/main/docker-compose.yml
+# 编辑里面的四个宿主机路径，然后：
+docker compose up -d
+```
+
+`docker-compose.yml` 里**没有 `build` 段**，只引用预构建镜像，所以目录里不需要 Dockerfile 和源码。
+
+### 方式二：克隆仓库 + deploy.sh
 
 ```bash
 git clone git@github.com:Mogvl/huangguo-down.git
 cd huangguo-down
 ./deploy.sh
 ```
+
+脚本会自动判断：目录里有 `Dockerfile` 就本地构建，没有就拉预构建镜像。
 
 数据目录默认 `/volume1/docker/huangguo-down`（配置/状态/日志）和 `/volume1/media/黄果`（视频）。想改：
 
@@ -80,21 +98,20 @@ DATA_ROOT=/volume2/docker/huangguo-down MEDIA_ROOT=/volume2/media/黄果 ./deplo
 
 同时把 `docker-compose.yml` 里对应的四个路径改掉。
 
-### 方式二：docker compose 手动
+### 方式三：从源码构建
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
-前提是 `docker-compose.yml` 里的四个宿主机路径已改成真实路径，且目录已存在。
+构建相关配置在单独的 `docker-compose.build.yml` 里，只有显式 `-f` 指定时才会生效。
 
-### 方式三：绿联图形界面
+### 方式四：绿联图形界面
 
-绿联的图形界面**只能拉取镜像，不能从源码构建**。所以先二选一：
+绿联的图形界面**只能拉取镜像，不能从源码构建**。所以先拉镜像：
 
 ```bash
-./deploy.sh pull      # 拉 GHCR 预构建镜像（快）
-./deploy.sh build     # 本地构建（慢，但可改代码）
+./deploy.sh pull      # 或 docker pull ghcr.io/mogvl/huangguo-down:latest
 ```
 
 然后：
@@ -215,6 +232,8 @@ docker exec huangguo-down python -m HGXZ.cli --max-albums 3 --max-episodes 2
 | 容器反复重启 | `docker logs hgxz` 看第一行；多半是 `/config` 没写权限，或 `config.json` JSON 语法错误 |
 | `/healthz` 不通但容器 running | 检查端口映射，以及 `HGXZ_PORT`/`HGXZ_API_PORT` 是否和映射的容器端口一致 |
 | 7731 通、7732 不通 | 后端端口没映射，或 `HGXZ_API_PORT=0` 关掉了；只用 WebUI 的话这不影响使用 |
+| `pull access denied for ...` | 镜像名写错（比如残留 `hgxz:nas`），或 GHCR 包是私有的需登录 |
+| `failed to read dockerfile: open Dockerfile` | compose 文件里带了 `build` 段但目录里没有源码；用仓库版的 `docker-compose.yml`（不含 build 段） |
 | 日志 `SSL: WRONG_VERSION_NUMBER` / `404` | DNS 污染，配 `HTTP_PROXY`/`HTTPS_PROXY`，且 `NO_PROXY` 不含站点域名 |
 | 日志 `HTTP 403` | 站点风控，调大 `HGXZ_REQUEST_INTERVAL` |
 | Emby 读不到文件 | 加 `UMASK=000`，或设 `PUID`/`PGID` 为 Emby 的运行用户 |
