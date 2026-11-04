@@ -250,6 +250,20 @@ jobs:
           print('✓ 旧平铺电影已迁移进同名文件夹')
           PY
 
+      - name: 验证合并跨设备（TMPDIR 异盘）不失败
+        run: |
+          docker exec hgxz-ci sh -c '
+            set -e
+            mkdir -p /tmp/extmp /tmp/xdev/短剧/跨设备剧 [huangguo-7777]/Season 01
+            for i in 1 2; do
+              ffmpeg -hide_banner -loglevel error -y                 -f lavfi -i testsrc=size=160x120:rate=10:duration=1                 -f lavfi -i sine=frequency=400:duration=1                 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest                 "/tmp/xdev/短剧/跨设备剧 [huangguo-7777]/Season 01/跨设备剧.S01E0$i.mp4"
+            done
+            # TMPDIR 指向与 /tmp/xdev 不同的文件系统（这里用 /tmp/extmp 模拟异盘）
+            TMPDIR=/tmp/extmp python -m HGXZ.merge_existing /tmp/xdev
+            test -f "/tmp/xdev/短剧/跨设备剧 (全2集)/跨设备剧 (全2集).mp4" || { echo "跨设备合并失败"; exit 1; }
+            echo "✓ 跨设备合并正常"
+          '
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
