@@ -23,6 +23,7 @@ _state_db: StateDB | None = None
 _log_buffer: LogBuffer | None = None
 _archiver_ref: list = []
 _sync_status: dict = {'running': False, 'last_sync': None, 'last_error': None}
+_last_merge_result: dict = {}
 # Shared by the scheduled loop (cli.run_daemon) and every WebUI trigger so two
 # syncs can never run at once -- they would download the same episode into the
 # same ".part" file.
@@ -220,6 +221,44 @@ def create_app(serve_static: bool = True) -> FastAPI:
         if not _start_background('scan-existing', work):
             return JSONResponse({'error': '同步正在进行中'}, 409)
         return {'status': 'started'}
+
+    @app.post('/api/merge-existing')
+    async def merge_existing_api(dry_run: bool = False,
+                                 keep_episodes: bool | None = None,
+                                 force: bool = False):
+        """Merge already-downloaded episodes into single movie files.
+
+        Runs entirely on local files, so it works even when the site is down.
+        """
+        if not _archiver_ref:
+            return JSONResponse({'error': 'not ready'}, 503)
+        archiver = _archiver_ref[0]
+        conf = archiver._merge_config()
+        delete_eps = conf['delete_episodes'] if keep_episodes is None else not keep_episodes
+
+        def work():
+            from ..merge_existing import merge_library
+            result = merge_library(archiver.root, delete_episodes=delete_eps,
+                                   dry_run=dry_run, force=force)
+            LOG.info('merge existing result: %s', {
+                k: v for k, v in result.items() if k != 'details'})
+            _last_merge_result['value'] = result
+
+        if not _start_background('merge-existing', work):
+            return JSONResponse({'error': '同步正在进行中，请稍后再试'}, 409)
+        return {'status': 'started', 'dry_run': dry_run}
+
+    @app.get('/api/merge-existing/preview')
+    async def merge_preview():
+        """How many albums still have loose episodes waiting to be merged."""
+        if not _archiver_ref:
+            return JSONResponse({'error': 'not ready'}, 503)
+        archiver = _archiver_ref[0]
+        try:
+            from ..merge_existing import preview_library
+            return preview_library(archiver.root)
+        except Exception as exc:
+            return JSONResponse({'error': str(exc)}, 500)
 
     @app.get('/api/logs')
     async def get_logs(n: int = Query(200, ge=1, le=2000)):

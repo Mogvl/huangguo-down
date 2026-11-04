@@ -131,6 +131,37 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
     return result
 
 
+def preview_library(root: Path) -> dict:
+    """Cheap count of albums that still have loose episodes.
+
+    Only stats the filesystem, so the WebUI can show "N 部待合并" on the button
+    without kicking off a merge.
+    """
+    if not root.is_dir():
+        return {'albums': 0, 'episodes': 0, 'pending': 0, 'merged': 0}
+    album_dirs = sorted(p.parent for p in root.rglob('tvshow.nfo'))
+    for path in root.rglob('*'):
+        if path.is_dir() and ALBUM_PATTERN.match(path.name) and path not in album_dirs:
+            album_dirs.append(path)
+
+    total_episodes = 0
+    pending = 0
+    already = 0
+    for album_dir in album_dirs:
+        episodes = _collect_episodes(album_dir)
+        if not episodes:
+            continue
+        title, _ = _read_title(album_dir)
+        target = album_dir.parent / build_movie_filename(title, len(episodes))
+        if target.is_file():
+            already += 1
+            continue
+        pending += 1
+        total_episodes += len(episodes)
+    return {'albums': len(album_dirs), 'episodes': total_episodes,
+            'pending': pending, 'merged': already}
+
+
 def _write_sidecars(album_dir: Path, target: Path, title: str, album_id: int,
                     episode_count: int, info: dict) -> None:
     """Reuse whatever metadata the old episode layout already had."""

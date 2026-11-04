@@ -217,6 +217,7 @@ header .container{display:flex;align-items:center;justify-content:space-between;
       <div class="logo">🍊 HGXZ<small>黄果下载</small></div>
     </div>
     <div class="header-actions">
+      <button class="btn btn-ghost" id="btn-merge">🎬 合并旧数据</button>
       <button class="btn btn-ghost" id="btn-scan">📂 扫描已有</button>
       <button class="btn btn-primary" id="btn-sync">🔄 立即同步</button>
     </div>
@@ -499,6 +500,7 @@ function updateSync(sync){
   document.getElementById('last-sync').textContent = '上次同步：' + (sync.last_sync || '-');
   document.getElementById('btn-sync').disabled = !!sync.running;
   document.getElementById('btn-scan').disabled = !!sync.running;
+  document.getElementById('btn-merge').disabled = !!sync.running;
 }
 
 /* ---------------- albums ---------------- */
@@ -674,6 +676,66 @@ document.getElementById('btn-scan').addEventListener('click', async () => {
     updateSync({running: true, last_sync: null, last_error: null});
   } catch(e) { toast('启动失败：' + e.message, true); }
 });
+// 把以前下载的分集合成单文件。先预览，让用户知道会影响多少部剧。
+async function refreshMergeBadge(){
+  const btn = document.getElementById('btn-merge');
+  try {
+    const p = await api('/api/merge-existing/preview');
+    if (p.pending > 0) {
+      btn.textContent = `🎬 合并旧数据 (${p.pending})`;
+      btn.title = `${p.pending} 部剧共有 ${p.episodes} 集待合并，点击处理`;
+    } else {
+      btn.textContent = '🎬 合并旧数据';
+      btn.title = p.merged > 0 ? '没有待合并的分集' : '没有需要合并的剧';
+    }
+  } catch(e) { /* 预览失败不影响主流程 */ }
+}
+document.getElementById('btn-merge').addEventListener('click', async () => {
+  let p;
+  try {
+    p = await api('/api/merge-existing/preview');
+  } catch(e) {
+    toast('读取待合并数量失败：' + e.message, true);
+    return;
+  }
+  if (!p.pending) {
+    toast(p.merged ? '没有待合并的分集了' : '没有找到可合并的剧集');
+    return;
+  }
+  const msg = `发现 ${p.pending} 部剧共 ${p.episodes} 集可以合并。\n\n` +
+    '合并后会生成「剧名 (全N集).mp4」，并删除原来的分集文件。\n' +
+    '合并纯本地进行，不联网，不影响已下载内容。\n\n继续？';
+  if (!confirm(msg)) return;
+  const btn = document.getElementById('btn-merge');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ 合并中…';
+  try {
+    await api('/api/merge-existing', {method: 'POST'});
+    toast(`已开始合并 ${p.pending} 部剧，可在日志页查看进度`);
+    // Poll until the backend reports the job finished, then refresh the count.
+    // Relying on the global sync poll is racy: a short merge can start and end
+    // between two 5s ticks, so the badge would never update.
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      try {
+        const st = await api('/api/sync-status');
+        const timedOut = Date.now() - started > 30 * 60 * 1000;
+        if (!st.running || timedOut) {
+          clearInterval(timer);
+          btn.disabled = false;
+          await refreshMergeBadge();
+          loadAlbums();
+          toast('合并完成');
+        }
+      } catch(e) { clearInterval(timer); btn.disabled = false; btn.textContent = original; }
+    }, 3000);
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = original;
+    toast('启动失败：' + e.message, true);
+  }
+});
 document.getElementById('btn-retry-all').addEventListener('click', async () => {
   if (!confirm('重置所有失败记录？下次同步将重新尝试下载这些剧集。')) return;
   try {
@@ -800,6 +862,9 @@ setInterval(async () => {
       if (onAlbums && currentAlbumId === null) loadAlbums();
       if (onDash) loadDashboard();
     }
+    // Refresh the badge only when a job just finished: the preview call walks
+    // the media tree, which is too costly to do every 5 seconds.
+    if (wasRunning && !s.running) refreshMergeBadge();
     wasRunning = !!s.running;
   } catch(e) {}
 }, 5000);
@@ -808,6 +873,7 @@ setInterval(async () => {
 loadDashboard();
 connectWS();
 loadInitialLogs();
+refreshMergeBadge();
 </script>
 </body>
 </html>

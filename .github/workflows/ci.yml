@@ -174,6 +174,24 @@ jobs:
             echo "✓ ffmpeg 合并链路可用"
           '
 
+      - name: 验证合并接口可用
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import sys; sys.path.insert(0, '/app')
+          from pathlib import Path
+          from HGXZ.merge_existing import preview_library
+          # 空目录不应报错，且各计数为 0
+          r = preview_library(Path('/tmp/nonexistent-xyz'))
+          assert r['pending'] == 0 and r['albums'] == 0, r
+          print('✓ 预览接口空目录正常:', r)
+          PY
+          # 页面里必须真的有这个按钮
+          docker exec hgxz-ci sh -c '
+            grep -q "btn-merge" /app/HGXZ/web/static/index.html || { echo "缺少合并按钮"; exit 1; }
+            grep -q "merge-existing/preview" /app/HGXZ/web/static/index.html || { echo "缺少预览调用"; exit 1; }
+            echo "✓ WebUI 合并按钮已就位"
+          '
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
