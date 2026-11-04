@@ -112,6 +112,17 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
                             pass
                 except Exception as exc:
                     LOG.debug('cannot repoint skipped merge %s: %s', album_id, exc)
+            # Rescue the poster before pruning the old show folder: _prune
+            # deletes album_dir/poster.jpg unconditionally, and this skip branch
+            # never ran _write_sidecars, so without this the cover would be lost.
+            if not dry_run:
+                try:
+                    poster = album_dir / 'poster.jpg'
+                    movie_poster = target.parent / f'{target.stem}-poster.jpg'
+                    if poster.is_file() and not movie_poster.is_file():
+                        poster.replace(movie_poster)
+                except OSError as exc:
+                    LOG.warning('cannot move poster for %s: %s', album_dir.name, exc)
             if delete_episodes and not dry_run:
                 for episode in episodes:
                     try:

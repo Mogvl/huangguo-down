@@ -285,6 +285,14 @@ class StateDB:
             return self.conn.execute(
                 'SELECT * FROM merges WHERE album_id=?', (album_id,)).fetchone()
 
+    def merge_rows_with_titles(self) -> list[dict]:
+        """Every recorded merge with its album title, for cover rebuilding."""
+        with self._lock:
+            return [dict(x) for x in self.conn.execute(
+                '''SELECT m.album_id, m.path, m.merged_episodes, a.title
+                   FROM merges m LEFT JOIN albums a ON a.id = m.album_id
+                   ORDER BY m.album_id''')]
+
     def mark_merge(self, album_id: int, path: str, merged_episodes: int,
                    size_bytes: int = 0) -> None:
         with self._lock:
