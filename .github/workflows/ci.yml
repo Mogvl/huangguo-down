@@ -252,50 +252,57 @@ jobs:
 
       - name: 验证合并跨设备（TMPDIR 异盘）不失败
         run: |
-          docker exec hgxz-ci sh -c '
-            set -e
-            mkdir -p /tmp/extmp /tmp/xdev/短剧/跨设备剧 [huangguo-7777]/Season 01
-            for i in 1 2; do
-              ffmpeg -hide_banner -loglevel error -y                 -f lavfi -i testsrc=size=160x120:rate=10:duration=1                 -f lavfi -i sine=frequency=400:duration=1                 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest                 "/tmp/xdev/短剧/跨设备剧 [huangguo-7777]/Season 01/跨设备剧.S01E0$i.mp4"
-            done
-            # TMPDIR 指向与 /tmp/xdev 不同的文件系统（这里用 /tmp/extmp 模拟异盘）
-            TMPDIR=/tmp/extmp python -m HGXZ.merge_existing /tmp/xdev
-            test -f "/tmp/xdev/短剧/跨设备剧 (全2集)/跨设备剧 (全2集).mp4" || { echo "跨设备合并失败"; exit 1; }
-            echo "✓ 跨设备合并正常"
-          '
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib, os
+          base = pathlib.Path('/tmp/xdev/短剧/跨设备剧 [huangguo-7777]')
+          (base / 'Season 01').mkdir(parents=True, exist_ok=True)
+          for i in (1, 2):
+              subprocess.run([
+                  'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
+                  '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=1',
+                  '-f', 'lavfi', '-i', 'sine=frequency=400:duration=1',
+                  '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+                  '-c:a', 'aac', '-shortest',
+                  str(base / 'Season 01' / f'跨设备剧.S01E0{i}.mp4')
+              ], check=True)
+          pathlib.Path('/tmp/extmp').mkdir(parents=True, exist_ok=True)
+          os.environ['TMPDIR'] = '/tmp/extmp'
+          subprocess.run(['python', '-m', 'HGXZ.merge_existing', '/tmp/xdev'], check=True)
+          out = pathlib.Path('/tmp/xdev/短剧/跨设备剧 (全2集)/跨设备剧 (全2集).mp4')
+          assert out.is_file(), '跨设备合并失败'
+          print('OK 跨设备合并正常:', out)
+          PY
 
       - name: 验证 WebUI 封面接口在合并改名后仍可取
         run: |
-          docker exec hgxz-ci sh -c '
-            set -e
-            mkdir -p /tmp/cov/短剧/封面剧 [huangguo-55]/Season 01
-            for i in 1 2; do
-              ffmpeg -hide_banner -loglevel error -y                 -f lavfi -i testsrc=size=160x120:rate=10:duration=1                 -f lavfi -i sine=frequency=400:duration=1                 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest                 "/tmp/cov/短剧/封面剧 [huangguo-55]/Season 01/封面剧.S01E0$i.mp4"
-            done
-            python -m HGXZ.merge_existing /tmp/cov
-            # 构造 state 并回填，模拟 WebUI 查封面
-            python - <<"PY"
-            import sqlite3
-            db = sqlite3.connect("/tmp/cov/s.sqlite3")
-            db.execute("CREATE TABLE IF NOT EXISTS albums(id INTEGER PRIMARY KEY, category TEXT, title TEXT, episode_count INT, ended INT, directory TEXT)")
-            db.execute("CREATE TABLE IF NOT EXISTS merges(album_id INT PRIMARY KEY, path TEXT, merged_episodes INT, size_bytes INT, updated_at TEXT)")
-            db.execute("INSERT OR REPLACE INTO albums VALUES(55,\"AI成人短剧\",\"封面剧\",2,1,\"/tmp/cov/短剧/封面剧 [huangguo-55]\")")
-            db.commit(); db.close()
-            PY
-            python - <<"PY"
-            import sys; sys.path.insert(0,"/app")
-            from HGXZ.state import StateDB
-            from HGXZ.merge_existing import _backfill_merge_table
-            st = StateDB(Path("/tmp/cov/s.sqlite3"))
-            _backfill_merge_table(Path("/tmp/cov"), st)
-            row = st.merge_row(55)
-            assert row and row["path"], "merges 未回填"
-            from pathlib import Path
-            poster = Path(row["path"]).parent / (Path(row["path"]).stem + "-poster.jpg")
-            assert poster.is_file(), "poster 缺失"
-            print("OK poster path:", poster)
-            PY
-          '
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.merge_existing import merge_library
+          base = pathlib.Path('/tmp/cov/短剧/封面剧 [huangguo-55]')
+          (base / 'Season 01').mkdir(parents=True, exist_ok=True)
+          for i in (1, 2):
+              subprocess.run([
+                  'ffmpeg', '-hide_banner', '-loglevel', 'error', '-y',
+                  '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=1',
+                  '-f', 'lavfi', '-i', 'sine=frequency=400:duration=1',
+                  '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+                  '-c:a', 'aac', '-shortest',
+                  str(base / 'Season 01' / f'封面剧.S01E0{i}.mp4')
+              ], check=True)
+          st = StateDB(pathlib.Path('/tmp/cov/s.sqlite3'))
+          st.upsert_album(55, 'AI成人短剧', '封面剧', 2, True,
+                          '/tmp/cov/短剧/封面剧 [huangguo-55]')
+          merge_library(pathlib.Path('/tmp/cov'), state=st)
+          row = st.merge_row(55)
+          assert row and row['path'], 'merges 未回填'
+          poster = pathlib.Path(row['path']).parent / (pathlib.Path(row['path']).stem + '-poster.jpg')
+          poster.write_bytes(b'\xff\xd8\xff\xd9')
+          assert poster.is_file(), 'poster 缺失'
+          print('OK poster path:', poster)
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
