@@ -155,6 +155,8 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
             continue
 
         _write_sidecars(album_dir, target, title, album_id, len(episodes), info)
+        prune_stale_movie_folders(target.parent.parent, title, target.parent,
+                                  dry_run=dry_run)
         if state is not None and album_id:
             try:
                 state.mark_merge(album_id, str(target), len(episodes),
@@ -279,6 +281,43 @@ def _backfill_merge_table(root: Path, state) -> int:
         LOG.info('backfilled %d merged movie(s) into merges table', pathed)
     return pathed
 
+MOVIE_FOLDER = re.compile(r'^(?P<title>.+?) \(全(?P<count>\d+)集\)$')
+
+
+def prune_stale_movie_folders(lib_root: Path, title: str, keep_dir: Path,
+                              *, dry_run: bool = False) -> list[str]:
+    """Delete older ``剧名 (全N集)/`` folders for the same show.
+
+    Incremental merges append new episodes and produce a new file name whose
+    episode count differs (``(全1集)`` -> ``(全2集)`` -> ...). The previous
+    folder is only removed by the sync path, so a manual ``--merge-existing``
+    run left every earlier count behind, which looks like duplicated downloads
+    in Emby and the file manager. Anything strictly older than ``keep_dir`` is a
+    prefix of it and therefore safe to drop.
+    """
+    removed: list[str] = []
+    name = sanitize_filename(title)
+    try:
+        candidates = [d for d in lib_root.iterdir()
+                      if d.is_dir() and d != keep_dir
+                      and d.name.startswith(f'{name} (全')
+                      and MOVIE_FOLDER.match(d.name)]
+    except OSError:
+        return removed
+    for folder in candidates:
+        if dry_run:
+            LOG.info('[dry-run] would remove stale movie folder %s', folder)
+            removed.append(str(folder))
+            continue
+        try:
+            shutil.rmtree(folder)
+            removed.append(str(folder))
+            LOG.info('removed stale movie folder %s', folder)
+        except OSError as exc:
+            LOG.warning('cannot remove %s: %s', folder, exc)
+    return removed
+
+
 def cleanup_merged(root: Path, state, *, dry_run: bool = False) -> dict:
     """Tidy up leftovers around already-merged shows.
 
@@ -294,7 +333,7 @@ def cleanup_merged(root: Path, state, *, dry_run: bool = False) -> dict:
     """
     from .core import sanitize_filename
     result = {'removed': 0, 'rescued_posters': 0, 'duplicates': [],
-              'skipped': 0}
+              'removed_duplicates': 0, 'skipped': 0}
     try:
         rows = state.merge_rows_with_titles()
     except Exception as exc:
@@ -310,18 +349,39 @@ def cleanup_merged(root: Path, state, *, dry_run: bool = False) -> dict:
         if not title or not lib.is_dir():
             continue
         name = sanitize_filename(title)
-        movie_poster = movie.parent / f'{movie.stem}-poster.jpg'
-        # Report sibling movie folders for the same title (e.g. 全5集 and 全6集
-        # left behind by an old incremental merge).
+        # Pick the folder with the highest episode count as the keeper: an
+        # incremental merge always contains every earlier episode, so the
+        # smaller folders are strict prefixes and safe to drop.
         try:
-            siblings = [d for d in lib.glob(glob.escape(f'{name}') + ' (全*集)')
-                        if d.is_dir() and d != movie.parent]
+            all_folders = [d for d in lib.iterdir()
+                           if d.is_dir() and d.name.startswith(f'{name} (全')
+                           and MOVIE_FOLDER.match(d.name)]
         except OSError:
-            siblings = []
-        if siblings:
-            result['duplicates'].append(
-                {'title': title, 'keep': str(movie.parent),
-                 'others': [str(d) for d in siblings]})
+            all_folders = []
+        def _count(folder: Path) -> int:
+            m = MOVIE_FOLDER.match(folder.name)
+            return int(m.group('count')) if m else -1
+        if all_folders:
+            keep_dir = max(all_folders, key=_count)
+            others = [d for d in all_folders if d != keep_dir]
+            if others:
+                result['duplicates'].append(
+                    {'title': title, 'keep': str(keep_dir),
+                     'others': [str(d) for d in others]})
+                for folder in others:
+                    if dry_run:
+                        LOG.info('[dry-run] would remove duplicate movie folder %s',
+                                 folder)
+                        continue
+                    try:
+                        shutil.rmtree(folder)
+                        result['removed_duplicates'] = \
+                            result.get('removed_duplicates', 0) + 1
+                        LOG.info('removed duplicate movie folder %s', folder)
+                    except OSError as exc:
+                        LOG.warning('cannot remove %s: %s', folder, exc)
+            movie = keep_dir / f'{keep_dir.name}.mp4'
+        movie_poster = movie.parent / f'{movie.stem}-poster.jpg'
         # NOTE: glob treats [huangguo-*] as a character class, so match the
         # show folder names with the ALBUM_PATTERN regex instead.
         try:

@@ -471,6 +471,15 @@ class Archiver:
             except OSError:
                 pass
 
+        # Also sweep any other 剧名 (全M集)/ folders left behind by earlier
+        # incremental merges, so a show never ends up with several movie files.
+        try:
+            from .merge_existing import prune_stale_movie_folders
+            prune_stale_movie_folders(target.parent.parent, album.title,
+                                      target.parent)
+        except Exception as exc:
+            LOG.debug('album=%s stale movie sweep skipped: %s', album.id, exc)
+
         deleted = 0
         if conf['delete_episodes']:
             for src in inputs:
