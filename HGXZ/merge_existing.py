@@ -123,6 +123,13 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
             try:
                 state.mark_merge(album_id, str(target), len(episodes),
                                  int((info or {}).get('size', 0)))
+                # Repoint episode records to the merged movie so future syncs do
+                # not treat the (now-deleted) episodes as missing and re-download.
+                for ep in episodes:
+                    try:
+                        state.mark_episode(album_id, ep.number, str(target), 'done')
+                    except Exception:
+                        pass
             except Exception as exc:
                 LOG.debug('cannot record merge for %s: %s', album_id, exc)
         result['merged'] += 1

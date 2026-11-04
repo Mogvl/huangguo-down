@@ -443,6 +443,20 @@ class Archiver:
                 LOG.warning('album=%s cannot move poster: %s', album.id, exc)
         self.state.mark_merge(album.id, str(target), limit, info.get('size', 0))
 
+        # Point every episode record at the merged movie so episode_done() sees a
+        # live file and the next sync does NOT re-download the whole show. The
+        # individual episode files are gone (deleted below), but the merge is the
+        # single source of truth now; leaving stale paths would make sync think
+        # every episode is missing and re-fetch all of them.
+        try:
+            for rec in self.state.episode_rows(album.id):
+                if rec.get('status') == 'done':
+                    self.state.mark_episode(album.id, rec['episode'],
+                                            str(target), 'done')
+        except Exception as exc:
+            LOG.warning('album=%s cannot repoint episodes to merge: %s',
+                        album.id, exc)
+
         # Old file replaced by a new name (episode count changed) -> drop stale
         # movie + sidecar + poster, otherwise Emby keeps showing the old entry.
         if prefix is not None and merged_file and merged_file != target:
