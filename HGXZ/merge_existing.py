@@ -73,6 +73,13 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
     after changing the naming or when a previous merge looked wrong.
     """
     result = {'albums': 0, 'merged': 0, 'skipped': 0, 'failed': 0, 'details': []}
+    # Older merges recorded merged_episodes=0, which makes episode_done think
+    # every episode is missing and re-downloads whole shows. Repair first.
+    if state is not None and not dry_run:
+        try:
+            repair_merge_counts(state)
+        except Exception as exc:
+            LOG.debug('merge count repair failed: %s', exc)
     if not root.is_dir():
         raise FileNotFoundError(f'media root not found: {root}')
 
@@ -93,7 +100,18 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
         result['albums'] += 1
         title, album_id = _read_title(album_dir)
         from .core import movie_target
-        _dir, target = movie_target(title, len(episodes), album_dir.parent)
+        # Reuse a longer existing movie instead of merging a handful of leftover
+        # episodes into a shorter one: that used to replace a complete (全5集)
+        # file with a (全2集) rebuilt from the leftovers, silently losing data.
+        covered_movie = find_existing_movie(album_dir.parent, title)
+        if covered_movie is not None:
+            covered = episode_count_from_name(covered_movie.stem)
+            if covered >= len(episodes):
+                _dir, target = movie_target(title, covered, album_dir.parent)
+            else:
+                _dir, target = movie_target(title, len(episodes), album_dir.parent)
+        else:
+            _dir, target = movie_target(title, len(episodes), album_dir.parent)
 
         if target.is_file() and not force:
             result['skipped'] += 1
@@ -105,7 +123,10 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
             # does not treat them as missing and fetch the show again.
             if state is not None and album_id:
                 try:
-                    state.mark_merge(album_id, str(target), len(episodes),
+                    # The movie name is authoritative: a leftover folder may
+                    # hold only a few episodes of a much longer merged movie.
+                    covered = max(len(episodes), episode_count_from_name(target.stem))
+                    state.mark_merge(album_id, str(target), covered,
                                      int(target.stat().st_size))
                     for ep in episodes:
                         try:
@@ -159,7 +180,8 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
                                   dry_run=dry_run)
         if state is not None and album_id:
             try:
-                state.mark_merge(album_id, str(target), len(episodes),
+                covered = max(len(episodes), episode_count_from_name(target.stem))
+                state.mark_merge(album_id, str(target), covered,
                                  int((info or {}).get('size', 0)))
                 # Repoint episode records to the merged movie so future syncs do
                 # not treat the (now-deleted) episodes as missing and re-download.
@@ -232,6 +254,54 @@ def _migrate_legacy_flat_movies(root: Path) -> int:
 
 
 
+MOVIE_FOLDER = re.compile(r'^(?P<title>.+?) \(全(?P<count>\d+)集\)$')
+
+
+def episode_count_from_name(name: str) -> int:
+    """Read N out of ``剧名 (全N集)``; 0 when the name has no such suffix."""
+    m = re.search(r'\(全(\d+)集\)', name)
+    return int(m.group(1)) if m else 0
+
+
+def repair_merge_counts(state, *, dry_run: bool = False) -> int:
+    """Fix merges rows whose merged_episodes does not match the movie name.
+
+    ``mark_merge`` used to be called with a hard-coded 0 while backfilling, so
+    every backfilled show claimed to cover zero episodes. ``episode_done``
+    relies on that number to decide an episode already lives inside the merged
+    movie, so a 0 made the whole show look un-downloaded and re-downloaded it.
+    """
+    fixed = 0
+    try:
+        rows = state.merge_rows_with_titles()
+    except Exception as exc:
+        LOG.warning('cannot read merges: %s', exc)
+        return fixed
+    for row in rows:
+        path = row.get('path') or ''
+        if not path:
+            continue
+        movie = Path(path)
+        want = episode_count_from_name(movie.stem)
+        have = int(row.get('merged_episodes') or 0)
+        if want <= 0 or want == have:
+            continue
+        if dry_run:
+            LOG.info('[dry-run] would fix merged_episodes %s: %s -> %s',
+                     row.get('title'), have, want)
+            fixed += 1
+            continue
+        try:
+            state.mark_merge(row['album_id'], path, want,
+                             int(movie.stat().st_size) if movie.is_file() else 0)
+            fixed += 1
+            LOG.info('fixed merged_episodes for %s: %s -> %s',
+                     row.get('title'), have, want)
+        except Exception as exc:
+            LOG.warning('cannot fix merge row %s: %s', row.get('album_id'), exc)
+    return fixed
+
+
 def _backfill_merge_table(root: Path, state) -> int:
     """Record already-merged movies into the merges table.
 
@@ -260,20 +330,34 @@ def _backfill_merge_table(root: Path, state) -> int:
             for n in (count, count - 1, count + 1):
                 if n <= 0:
                     continue
-                cand = lib_root / f'{sanitize_filename(title)} (全{n}集)' /                     f'{sanitize_filename(title)} (全{n}集).mp4'
+                folder = lib_root / f'{sanitize_filename(title)} (全{n}集)'
+                cand = folder / f'{folder.name}.mp4'
                 if cand.is_file():
                     movie = cand
                     break
             if movie is None:
                 # Fallback: any "全N集" folder whose name starts with the title.
-                for folder in lib_root.glob(f'{sanitize_filename(title)} (全*集)'):
-                    cand = folder / folder.name + '.mp4'
+                # glob would treat [huangguo-...] as a character class, and the
+                # title itself may contain brackets, so match names by hand.
+                try:
+                    folders = [d for d in lib_root.iterdir()
+                               if d.is_dir()
+                               and d.name.startswith(f'{sanitize_filename(title)} (全')
+                               and MOVIE_FOLDER.match(d.name)]
+                except OSError:
+                    folders = []
+                for folder in folders:
+                    cand = folder / f'{folder.name}.mp4'
                     if cand.is_file():
                         movie = cand
                         break
             if movie is None:
                 continue
-            state.mark_merge(album_id, str(movie), 0, int(movie.stat().st_size))
+            # The count must come from the movie name: recording 0 made every
+            # episode look un-downloaded, which re-downloaded whole shows.
+            covered = episode_count_from_name(movie.stem)
+            state.mark_merge(album_id, str(movie), covered,
+                             int(movie.stat().st_size))
             pathed += 1
     except Exception as exc:
         LOG.debug('merge table backfill interrupted: %s', exc)
@@ -281,7 +365,25 @@ def _backfill_merge_table(root: Path, state) -> int:
         LOG.info('backfilled %d merged movie(s) into merges table', pathed)
     return pathed
 
-MOVIE_FOLDER = re.compile(r'^(?P<title>.+?) \(全(?P<count>\d+)集\)$')
+def find_existing_movie(lib_root: Path, title: str) -> Path | None:
+    """The existing merged movie for ``title`` with the highest episode count."""
+    name = sanitize_filename(title)
+    best: Path | None = None
+    best_count = -1
+    try:
+        folders = [d for d in lib_root.iterdir()
+                   if d.is_dir() and d.name.startswith(f'{name} (全')
+                   and MOVIE_FOLDER.match(d.name)]
+    except OSError:
+        return None
+    for folder in folders:
+        movie = folder / f'{folder.name}.mp4'
+        if not movie.is_file():
+            continue
+        count = episode_count_from_name(movie.stem)
+        if count > best_count:
+            best, best_count = movie, count
+    return best
 
 
 def prune_stale_movie_folders(lib_root: Path, title: str, keep_dir: Path,
@@ -297,11 +399,15 @@ def prune_stale_movie_folders(lib_root: Path, title: str, keep_dir: Path,
     """
     removed: list[str] = []
     name = sanitize_filename(title)
+    keep_count = episode_count_from_name(keep_dir.name)
     try:
         candidates = [d for d in lib_root.iterdir()
                       if d.is_dir() and d != keep_dir
                       and d.name.startswith(f'{name} (全')
-                      and MOVIE_FOLDER.match(d.name)]
+                      and MOVIE_FOLDER.match(d.name)
+                      # Never remove a folder covering MORE episodes: it may be
+                      # the complete movie while we are holding only leftovers.
+                      and episode_count_from_name(d.name) < keep_count]
     except OSError:
         return removed
     for folder in candidates:
@@ -450,7 +556,18 @@ def preview_library(root: Path) -> dict:
             continue
         title, _ = _read_title(album_dir)
         from .core import movie_target
-        _dir, target = movie_target(title, len(episodes), album_dir.parent)
+        # Reuse a longer existing movie instead of merging a handful of leftover
+        # episodes into a shorter one: that used to replace a complete (全5集)
+        # file with a (全2集) rebuilt from the leftovers, silently losing data.
+        covered_movie = find_existing_movie(album_dir.parent, title)
+        if covered_movie is not None:
+            covered = episode_count_from_name(covered_movie.stem)
+            if covered >= len(episodes):
+                _dir, target = movie_target(title, covered, album_dir.parent)
+            else:
+                _dir, target = movie_target(title, len(episodes), album_dir.parent)
+        else:
+            _dir, target = movie_target(title, len(episodes), album_dir.parent)
         if target.is_file():
             already += 1
             continue
