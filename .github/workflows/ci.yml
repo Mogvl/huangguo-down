@@ -418,6 +418,43 @@ jobs:
           st.close()
           PY
 
+      - name: 验证已合并剧不重建目录、不重复下载
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.core import Album
+          from HGXZ.cli import Archiver
+          import HGXZ.cli as C
+          root = pathlib.Path('/tmp/nodup/AI成人短剧')
+          m = root/'不重下剧 (全2集)'; m.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(m/'不重下剧 (全2集).mp4')], check=True)
+          movie = m/'不重下剧 (全2集).mp4'
+          db = StateDB(pathlib.Path('/tmp/nodup/s.sqlite3'))
+          db.upsert_album(1,'AI成人短剧','不重下剧',2,True,str(root/'不重下剧 [huangguo-1]'))
+          db.mark_merge(1, str(movie), 2, 1000)
+          # 故意把 episodes.path 指向不存在的旧分集（模拟旧代码合并后的状态）
+          for n in (1,2):
+              db.mark_episode(1,n,str(root/'不重下剧 [huangguo-1]'/'Season 01'/f'不重下剧.S01E0{n}.mp4'),'done')
+          assert all(db.episode_done(1,n) for n in (1,2)), 'episode_done 兜底未生效'
+          assert not db.episode_done(1,3), '超出合并范围应为 False'
+          db.close()
+          cfg = {'site':{'base_url':'http://127.0.0.1:1','categories':[{'name':'AI成人短剧','path':'/ai-duanju/','library':'AI成人短剧'}]},
+                 'download':{'root':'/tmp/nodup','minimum_duration':1},
+                 'merge':{'enabled':True,'delete_episodes':True,'only_when_complete':False},
+                 'state':{'database':'/tmp/nodup/s.sqlite3'},'log':{'directory':''}}
+          a = Archiver(cfg)
+          class FakeClient:
+              def get_text(self, p): return '<html></html>'
+          a.client = FakeClient()
+          C.parse_detail_html = lambda aid, cat, html: Album(id=1, category=cat, title='不重下剧', plot='', year=2025, tags=[], episode_count=2, ended=True, cover_url=None)
+          r = a.sync_album(1, cfg['site']['categories'][0])
+          assert r.get('reason') == 'already-merged', f'未跳过已合并: {r}'
+          assert not (root/'不重下剧 [huangguo-1]').exists(), 'TV 目录被重建了'
+          print('OK 已合并剧跳过同步且未重建 TV 目录')
+          a.state.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
