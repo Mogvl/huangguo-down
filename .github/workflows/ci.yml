@@ -356,6 +356,47 @@ jobs:
           st.close()
           PY
 
+      - name: 验证 skip 分支不丢封面 + 补抓已合并封面
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.merge_existing import merge_library
+          from HGXZ.rebuild_covers import rebuild
+          # 电影已存在、残留分集目录里带 poster.jpg
+          src = pathlib.Path('/tmp/covskip/短剧/丢图剧 [huangguo-99]/Season 01')
+          src.mkdir(parents=True, exist_ok=True)
+          for i in (1,2):
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(src/f'丢图剧.S01E0{i}.mp4')], check=True)
+          movie_dir = pathlib.Path('/tmp/covskip/短剧/丢图剧 (全2集)'); movie_dir.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=2','-f','lavfi','-i','sine=frequency=400:duration=2','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(movie_dir/'丢图剧 (全2集).mp4')], check=True)
+          # 旧目录里有封面
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=120x160:duration=1','-frames:v','1',str(src.parent/'poster.jpg')], check=True)
+          st = StateDB(pathlib.Path('/tmp/covskip/s.sqlite3'))
+          st.upsert_album(99,'AI成人短剧','丢图剧',2,True,'/tmp/covskip/短剧/丢图剧 [huangguo-99]')
+          for i in (1,2):
+              st.mark_episode(99,i,str(src/f'丢图剧.S01E0{i}.mp4'),'done')
+          merge_library(pathlib.Path('/tmp/covskip'), state=st)
+          rescued = movie_dir/'丢图剧 (全2集)-poster.jpg'
+          assert rescued.is_file(), 'skip 清理时封面未抢救'
+          print('OK skip 分支保住封面')
+
+          # 再造一部缺封面的已合并电影，用 rebuild 补抓
+          m2 = pathlib.Path('/tmp/covskip/短剧/补图剧 (全1集)'); m2.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(m2/'补图剧 (全1集).mp4')], check=True)
+          st.upsert_album(100,'AI成人短剧','补图剧',1,True,'')
+          st.mark_merge(100, str(m2/'补图剧 (全1集).mp4'), 1, 10)
+          cover_src = pathlib.Path('/tmp/covskip/real.jpg')
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=120x160:duration=1','-frames:v','1',str(cover_src)], check=True)
+          class FakeClient:
+              def cover_url(self, i): return 'http://x/c.jpg'
+              def get_bytes(self, u): return cover_src.read_bytes()
+          r = rebuild(pathlib.Path('/tmp/covskip'), FakeClient(), state=st)
+          assert (m2/'补图剧 (全1集)-poster.jpg').is_file(), 'rebuild 未补抓合并封面'
+          print('OK 已合并电影封面可补抓:', r)
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
