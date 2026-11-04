@@ -149,25 +149,50 @@ def create_app(serve_static: bool = True) -> FastAPI:
             'exists': Path(merge['path']).is_file(),
         } if merge else None)
         directory = result.get('directory') or ''
-        result['poster_available'] = bool(directory) and (Path(directory) / 'poster.jpg').is_file()
+        result['poster_available'] = bool(directory) and (
+            (Path(directory) / 'poster.jpg').is_file()
+            or _merged_poster_exists(album_id, result.get('merge') or {})
+        )
         return result
+
+    def _merged_poster_exists(album_id: int, merge_info: dict) -> bool:
+        path = (merge_info.get('path') if isinstance(merge_info, dict) else None) or ''
+        if not path:
+            mrow = _state_db.merge_row(album_id) if _state_db else None
+            path = (mrow['path'] if mrow else '') or ''
+        if not path:
+            return False
+        movie = Path(path)
+        # Emby-style "<movie>-poster.jpg" next to the merged file.
+        sidecar = movie.parent / f'{movie.stem}-poster.jpg'
+        return sidecar.is_file() and sidecar.stat().st_size > 0
 
     @app.get('/api/albums/{album_id}/poster')
     async def album_poster(album_id: int):
-        """Serve the scraped poster so the library list can show real covers."""
+        """Serve the scraped poster so the library list can show real covers.
+
+        After a merge the poster lives next to the merged movie file as
+        ``<movie>-poster.jpg`` (the old ``poster.jpg`` inside the now-removed
+        show folder is gone), so we check both locations.
+        """
         if not _state_db:
             return JSONResponse({'error': 'not ready'}, 503)
         row = _state_db.album_row(album_id)
         if not row or not row['directory']:
             return JSONResponse({'error': 'not found'}, 404)
-        poster = Path(row['directory']) / 'poster.jpg'
-        try:
-            if not poster.is_file() or poster.stat().st_size == 0:
-                return JSONResponse({'error': 'not found'}, 404)
-        except OSError:
-            return JSONResponse({'error': 'not found'}, 404)
-        return FileResponse(poster, media_type='image/jpeg',
-                            headers={'Cache-Control': 'max-age=3600'})
+        candidates = [Path(row['directory']) / 'poster.jpg']
+        mrow = _state_db.merge_row(album_id)
+        if mrow and mrow['path']:
+            movie = Path(mrow['path'])
+            candidates.append(movie.parent / f'{movie.stem}-poster.jpg')
+        for poster in candidates:
+            try:
+                if poster.is_file() and poster.stat().st_size > 0:
+                    return FileResponse(poster, media_type='image/jpeg',
+                                        headers={'Cache-Control': 'max-age=3600'})
+            except OSError:
+                continue
+        return JSONResponse({'error': 'not found'}, 404)
 
     def _start_background(name: str, work):
         """Run a blocking job once, refusing to start while another is active."""

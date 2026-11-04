@@ -18,7 +18,7 @@ import json
 import logging
 import re
 
-from .core import build_movie_filename, write_movie_nfo
+from .core import build_movie_filename, write_movie_nfo, sanitize_filename
 from .download import merge_videos, probe_media
 
 
@@ -63,7 +63,8 @@ def _read_title(album_dir: Path) -> tuple[str, int]:
 
 
 def merge_library(root: Path, *, delete_episodes: bool = True,
-                  dry_run: bool = False, force: bool = False) -> dict:
+                  dry_run: bool = False, force: bool = False,
+                  state=None) -> dict:
     """Merge every album folder under ``root`` that still has loose episodes.
 
     ``force`` re-merges shows that already have a movie file, which is useful
@@ -74,6 +75,8 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
         raise FileNotFoundError(f'media root not found: {root}')
 
     _migrate_legacy_flat_movies(root)
+    if state is not None:
+        _backfill_merge_table(root, state)
 
     album_dirs = sorted(p.parent for p in root.rglob('tvshow.nfo'))
     # A folder that only has episodes (no tvshow.nfo) still deserves merging.
@@ -116,6 +119,12 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
             continue
 
         _write_sidecars(album_dir, target, title, album_id, len(episodes), info)
+        if state is not None and album_id:
+            try:
+                state.mark_merge(album_id, str(target), len(episodes),
+                                 int((info or {}).get('size', 0)))
+            except Exception as exc:
+                LOG.debug('cannot record merge for %s: %s', album_id, exc)
         result['merged'] += 1
 
         if delete_episodes:
@@ -175,6 +184,57 @@ def _migrate_legacy_flat_movies(root: Path) -> int:
         LOG.info('migrated %d legacy flat movie(s) into per-show folders', moved)
     return moved
 
+
+
+
+def _backfill_merge_table(root: Path, state) -> int:
+    """Record already-merged movies into the merges table.
+
+    Older manual merges never called mark_merge, so the WebUI's poster endpoint
+    (which reads merges.path) could not find their cover. We walk every album in
+    the state DB, and if its merged movie file already exists on disk but the
+    merges table has no path for it, we upsert the path so the cover resolves.
+    """
+    pathed = 0
+    try:
+        for row in state.all_albums():
+            album_id = row['id']
+            if state.merge_row(album_id):
+                continue
+            directory = row.get('directory') or ''
+            if not directory:
+                continue
+            lib_root = Path(directory).parent
+            if not lib_root.is_dir():
+                continue
+            title = row['title']
+            count = int(row.get('episode_count') or 0)
+            movie = None
+            # The merged file name uses the actual episode count; try the
+            # declared count and a few neighbours in case it differs slightly.
+            for n in (count, count - 1, count + 1):
+                if n <= 0:
+                    continue
+                cand = lib_root / f'{sanitize_filename(title)} (全{n}集)' /                     f'{sanitize_filename(title)} (全{n}集).mp4'
+                if cand.is_file():
+                    movie = cand
+                    break
+            if movie is None:
+                # Fallback: any "全N集" folder whose name starts with the title.
+                for folder in lib_root.glob(f'{sanitize_filename(title)} (全*集)'):
+                    cand = folder / folder.name + '.mp4'
+                    if cand.is_file():
+                        movie = cand
+                        break
+            if movie is None:
+                continue
+            state.mark_merge(album_id, str(movie), 0, int(movie.stat().st_size))
+            pathed += 1
+    except Exception as exc:
+        LOG.debug('merge table backfill interrupted: %s', exc)
+    if pathed:
+        LOG.info('backfilled %d merged movie(s) into merges table', pathed)
+    return pathed
 
 def preview_library(root: Path) -> dict:
     """Cheap count of albums that still have loose episodes.

@@ -941,10 +941,12 @@ def main() -> int:
             root,
             delete_episodes=merge_conf.get('delete_episodes', True),
             force=bool(args.force_merge),
-            dry_run=bool(args.merge_dry_run))
+            dry_run=bool(args.merge_dry_run),
+            state=state)
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json
               else f"扫描 {result['albums']} 个专辑，合并 {result['merged']} 个，"
                    f"跳过 {result['skipped']} 个，失败 {result['failed']} 个")
+        state.close()
         return 0 if result['failed'] == 0 else 1
 
     if args.rebuild_covers:
