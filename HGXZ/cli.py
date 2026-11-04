@@ -338,18 +338,22 @@ class Archiver:
         return library / build_movie_filename(album.title, episode_count)
 
     def _episode_sources(self, album_id: int, album_dir: Path,
-                         upto: int, start: int = 1) -> list[Path]:
-        """Episode files start..upto, in order.
+                         numbers: list[int] | None = None, *,
+                         upto: int | None = None, start: int = 1) -> list[Path]:
+        """Collect episode files for the requested numbers, in order.
 
-        A gap inside the requested range would silently drop an episode from
-        the merged movie, so that is treated as "not ready" rather than
-        skipped. Episodes below ``start`` are already inside the existing
-        merged file and are not expected on disk.
+        When ``numbers`` is given (the usual path), a missing episode is simply
+        omitted -- the site often advertises more episodes than its CDN serves,
+        and we must not refuse to merge the ones we do have. When only
+        ``upto`` is given we fall back to the strict 1..upto range where any gap
+        aborts the merge, preserving the old behaviour for callers that need it.
         """
+        if numbers is None:
+            numbers = list(range(start, (upto or 0) + 1))
         season_dir = album_dir / 'Season 01'
         sources: list[Path] = []
         missing: list[int] = []
-        for number in range(start, upto + 1):
+        for number in numbers:
             row = self.state.episode_row(album_id, number)
             candidate = None
             if row and row['path']:
@@ -363,9 +367,8 @@ class Archiver:
             else:
                 sources.append(candidate)
         if missing:
-            LOG.warning('album=%s merge skipped: episodes missing %s',
-                        album_id, missing[:10])
-            return []
+            LOG.warning('album=%s merge: %d episode(s) unavailable, skipping them: %s',
+                        album_id, len(missing), missing[:10])
         return sources
 
     def merge_album(self, album, album_dir: Path, limit: int, *,
@@ -405,7 +408,15 @@ class Archiver:
         # With a prefix in place, episodes 1..merged_upto are already inside
         # the merged file and were deliberately deleted, so only look for the
         # new range.
-        sources = self._episode_sources(album.id, album_dir, limit, start=start)
+        # Only merge episodes that actually succeeded this far. Failed episodes
+        # (declared but not served by the CDN) are intentionally excluded so a
+        # show with an inflated declared count still produces a movie.
+        done_numbers = [r['episode'] for r in self.state.episode_rows(album.id)
+                        if r['status'] == 'done' and Path(r['path']).exists()]
+        if not force:
+            done_numbers = [n for n in done_numbers if n > merged_upto]
+        sources = self._episode_sources(album.id, album_dir,
+                                        numbers=done_numbers, start=start)
         if not sources:
             LOG.info('album=%s merge: no new episode files found', album.id)
             return None
@@ -672,20 +683,35 @@ class Archiver:
                 failed_episodes.append(number)
                 LOG.error('album=%s ep=%s giving up after %s attempt(s): %s',
                           album.id, number, attempt, last)
-        if pending and done == limit and not metadata_only:
-            LOG.info('album=%s [%s] 全部 %d 集已下载完毕', album.id, album.title, limit)
+        if not metadata_only:
+            LOG.info('album=%s [%s] 同步结束: 成功 %d/%d 集, 失败 %d 集',
+                     album.id, album.title, done, limit, len(failed_episodes))
 
-        # Merge only when every episode up to `limit` is present: a partial
-        # merge would produce a movie with a hole in the middle.
+        # Merge when every episode we know about has been handled and at least
+        # one succeeded. The site's declared episode_count is not trusted: it is
+        # frequently higher than what the CDN actually serves, which would leave
+        # done < limit forever and never merge. We only require that nothing is
+        # still pending (to be downloaded or in cooldown); failed episodes are
+        # tolerated so a show with an inflated count still merges.
         merge_result = None
         if not metadata_only:
             conf = self._merge_config()
-            ready = (conf['enabled'] and limit > 0 and done >= limit
-                     and not failed_episodes)
-            if ready and conf['only_when_complete'] and not album.ended:
-                LOG.info('album=%s merge deferred: still airing', album.id)
-            elif ready:
-                merge_result = self.merge_album(album, album_dir, limit, force=force)
+            ready, done_n, failed_n, pending_n = self.state.album_merge_ready(album.id)
+            if conf['enabled'] and ready:
+                if conf['only_when_complete'] and not album.ended:
+                    LOG.info('album=%s merge deferred: still airing '
+                             '(%d done, %d failed, %d pending)', album.id,
+                             done_n, failed_n, pending_n)
+                else:
+                    if failed_n:
+                        LOG.warning('album=%s merging with %d failed episode(s) '
+                                    'omitted (declared count may exceed served)',
+                                    album.id, failed_n)
+                    merge_result = self.merge_album(album, album_dir, done_n,
+                                                   force=force)
+            elif conf['enabled'] and not ready:
+                LOG.info('album=%s merge not ready: %d done, %d failed, %d pending',
+                         album.id, done_n, failed_n, pending_n)
 
         result = {'album': asdict(album), 'directory': str(album_dir),
                   'episodes_done': done, 'metadata_only': metadata_only}

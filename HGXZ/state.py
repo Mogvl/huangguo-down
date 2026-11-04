@@ -94,6 +94,14 @@ class StateDB:
                 (album_id, episode)).fetchone()
             return bool(row and row['status'] == 'done' and Path(row['path']).exists())
 
+    def episode_rows(self, album_id: int) -> list[sqlite3.Row]:
+        """All episode rows for an album, used by the merge step to find which
+        episodes actually downloaded successfully."""
+        with self._lock:
+            return [dict(x) for x in self.conn.execute(
+                'SELECT * FROM episodes WHERE album_id=? ORDER BY episode',
+                (album_id,)).fetchall()]
+
     def episode_row(self, album_id: int, episode: int) -> sqlite3.Row | None:
         with self._lock:
             return self.conn.execute(
@@ -121,6 +129,45 @@ class StateDB:
                 return False
             return all(number in done and Path(done[number]).exists()
                        for number in range(1, episode_count + 1))
+
+    def album_merge_ready(self, album_id: int) -> tuple[bool, int, int, int]:
+        """Decide whether a just-synced album can be merged, independent of the
+        site's often-inflated episode_count.
+
+        Returns (ready, done, failed, pending):
+          - done    : episodes marked done with a file present
+          - failed  : episodes marked failed (won't be retried for a while)
+          - pending : episodes with no row at all (still to be downloaded, or in
+                      cooldown) -- these block a merge because they may arrive
+                      on a later sync
+        A merge is ready when there is at least one done episode and nothing is
+        left pending. Failed episodes are tolerated: a show whose declared count
+        exceeds what the CDN actually serves would otherwise never merge.
+        """
+        with self._lock:
+            rows = self.conn.execute(
+                'SELECT episode,status,path FROM episodes WHERE album_id=?',
+                (album_id,)).fetchall()
+        done = 0
+        failed = 0
+        present = set()
+        for row in rows:
+            if row['status'] == 'done' and Path(row['path']).exists():
+                done += 1
+                present.add(row['episode'])
+            elif row['status'] == 'failed':
+                failed += 1
+        # An episode is still pending if it neither succeeded nor failed. The
+        # declared count is not trusted here; we only care about what we know.
+        known = {row['episode'] for row in rows}
+        # Determine the highest episode number we have any record of.
+        if known:
+            max_ep = max(known)
+            pending = sum(1 for n in range(1, max_ep + 1) if n not in known)
+        else:
+            pending = 0
+        ready = done > 0 and pending == 0
+        return ready, done, failed, pending
 
     def unfinished_albums(self) -> list[dict]:
         with self._lock:

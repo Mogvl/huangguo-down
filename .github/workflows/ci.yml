@@ -192,6 +192,30 @@ jobs:
             echo "✓ WebUI 合并按钮已就位"
           '
 
+      - name: 验证合并不受声明集数虚高影响
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import sys; sys.path.insert(0, '/app')
+          from pathlib import Path
+          from HGXZ.state import StateDB
+          db = StateDB(Path('/tmp/mergechk.sqlite3'))
+          # 模拟：站点声明 14 集，但实际只成功下载 13 集（第14集是预告/未提供）
+          db.upsert_album(9001, 'AI成人短剧', '测试剧', 14, True, '/tmp/x')
+          for n in range(1, 14):
+              db.mark_episode(9001, n, f'/tmp/x/s{n}.mp4', 'done', 100)
+          ready, done, failed, pending = db.album_merge_ready(9001)
+          assert ready and done == 13 and pending == 0, (ready, done, failed, pending)
+          print('✓ 声明14集只下13集也判定可合并:', (ready, done, failed, pending))
+          # 有一集还在 pending（无记录）则不可合并
+          db2 = StateDB(Path('/tmp/mergechk2.sqlite3'))
+          db2.upsert_album(9002, 'AI成人短剧', '测试剧2', 14, True, '/tmp/y')
+          for n in range(1, 13):
+              db2.mark_episode(9002, n, f'/tmp/y/s{n}.mp4', 'done', 100)
+          ready2, *_ = db2.album_merge_ready(9002)
+          assert not ready2, '有 pending 集不应合并'
+          print('✓ 仍有待下载集时不合并:', ready2)
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
