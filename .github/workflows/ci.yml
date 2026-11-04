@@ -216,6 +216,39 @@ jobs:
           print('✓ 仍有待下载集时不合并:', ready2)
           PY
 
+      - name: 验证合并产物每部一个独立文件夹
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import sys; sys.path.insert(0, '/app')
+          from pathlib import Path
+          from HGXZ.merge_existing import merge_library, _migrate_legacy_flat_movies
+          import tempfile, subprocess, os
+          root = Path('/tmp/folder-ci'); root.mkdir(parents=True, exist_ok=True)
+          lib = root / 'AI成人短剧'; lib.mkdir(parents=True, exist_ok=True)
+          # 造一部已下载的剧（模拟老数据）
+          d = lib / '测试剧 [huangguo-1]'; sd = d / 'Season 01'; sd.mkdir(parents=True)
+          for i in (1,2):
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y',
+                '-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1',
+                '-f','lavfi','-i','sine=frequency=400:duration=1',
+                '-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',
+                str(sd / f'测试剧.S01E0{i}.mp4')], check=True)
+          merge_library(root, delete_episodes=True)
+          # 应该生成：lib/测试剧 (全2集)/测试剧 (全2集).mp4
+          out = lib / '测试剧 (全2集)' / '测试剧 (全2集).mp4'
+          assert out.is_file(), f'合并产物未在独立文件夹: {out}'
+          assert not (d / 'Season 01').exists(), '旧 Season 目录应已删除'
+          print('✓ 合并产物在独立文件夹:', out)
+
+          # 迁移：库根平铺的旧电影应移进同名文件夹
+          flat = lib / '旧剧 (全1集).mp4'; flat.write_bytes(b'x')
+          (lib / '旧剧 (全1集).nfo').write_text('x')
+          _migrate_legacy_flat_movies(root)
+          assert (lib / '旧剧 (全1集)' / '旧剧 (全1集).mp4').is_file(), '平铺电影未迁移进文件夹'
+          assert not flat.exists(), '原平铺文件应已移走'
+          print('✓ 旧平铺电影已迁移进同名文件夹')
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
