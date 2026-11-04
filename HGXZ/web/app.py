@@ -148,44 +148,62 @@ def create_app(serve_static: bool = True) -> FastAPI:
             'size_bytes': merge['size_bytes'],
             'exists': Path(merge['path']).is_file(),
         } if merge else None)
-        directory = result.get('directory') or ''
-        result['poster_available'] = bool(directory) and (
-            (Path(directory) / 'poster.jpg').is_file()
-            or _merged_poster_exists(album_id, result.get('merge') or {})
-        )
+        result['poster_available'] = _merged_poster_exists(
+            album_id, result.get('merge') or {})
         return result
 
+    def _poster_candidates(album_id: int) -> list[Path]:
+        """Every path a cover for this album can live at, best first.
+
+        A merged show keeps its cover next to the movie file as
+        ``<title> (全N集)/<title> (全N集)-poster.jpg``. The merges table is the
+        fast way to find it, but it can be incomplete (older merges, or a merge
+        run without a state handle), so we also scan the library folder for a
+        same-titled movie directory. That keeps covers working even when the
+        bookkeeping is stale.
+        """
+        row = _state_db.album_row(album_id) if _state_db else None
+        if not row:
+            return []
+        out: list[Path] = []
+        directory = row['directory'] or ''
+        if directory:
+            out.append(Path(directory) / 'poster.jpg')
+        mrow = _state_db.merge_row(album_id) if _state_db else None
+        if mrow and mrow['path']:
+            movie = Path(mrow['path'])
+            out.append(movie.parent / f'{movie.stem}-poster.jpg')
+        # Fallback: scan the library root for "<title> (全N集)" folders.
+        if directory:
+            from ..core import sanitize_filename
+            lib_root = Path(directory).parent
+            title = (row['title'] or '').strip()
+            if title and lib_root.is_dir():
+                name = sanitize_filename(title)
+                try:
+                    for folder in lib_root.glob(f'{name} (全*集)'):
+                        if folder.is_dir():
+                            out.append(folder / f'{folder.name}-poster.jpg')
+                            out.append(folder / 'poster.jpg')
+                except OSError:
+                    pass
+        return out
+
     def _merged_poster_exists(album_id: int, merge_info: dict) -> bool:
-        path = (merge_info.get('path') if isinstance(merge_info, dict) else None) or ''
-        if not path:
-            mrow = _state_db.merge_row(album_id) if _state_db else None
-            path = (mrow['path'] if mrow else '') or ''
-        if not path:
-            return False
-        movie = Path(path)
-        # Emby-style "<movie>-poster.jpg" next to the merged file.
-        sidecar = movie.parent / f'{movie.stem}-poster.jpg'
-        return sidecar.is_file() and sidecar.stat().st_size > 0
+        for poster in _poster_candidates(album_id):
+            try:
+                if poster.is_file() and poster.stat().st_size > 0:
+                    return True
+            except OSError:
+                continue
+        return False
 
     @app.get('/api/albums/{album_id}/poster')
     async def album_poster(album_id: int):
-        """Serve the scraped poster so the library list can show real covers.
-
-        After a merge the poster lives next to the merged movie file as
-        ``<movie>-poster.jpg`` (the old ``poster.jpg`` inside the now-removed
-        show folder is gone), so we check both locations.
-        """
+        """Serve the scraped poster so the library list can show real covers."""
         if not _state_db:
             return JSONResponse({'error': 'not ready'}, 503)
-        row = _state_db.album_row(album_id)
-        if not row or not row['directory']:
-            return JSONResponse({'error': 'not found'}, 404)
-        candidates = [Path(row['directory']) / 'poster.jpg']
-        mrow = _state_db.merge_row(album_id)
-        if mrow and mrow['path']:
-            movie = Path(mrow['path'])
-            candidates.append(movie.parent / f'{movie.stem}-poster.jpg')
-        for poster in candidates:
+        for poster in _poster_candidates(album_id):
             try:
                 if poster.is_file() and poster.stat().st_size > 0:
                     return FileResponse(poster, media_type='image/jpeg',
@@ -264,7 +282,8 @@ def create_app(serve_static: bool = True) -> FastAPI:
         def work():
             from ..merge_existing import merge_library
             result = merge_library(archiver.root, delete_episodes=delete_eps,
-                                   dry_run=dry_run, force=force)
+                                   dry_run=dry_run, force=force,
+                                   state=archiver.state)
             LOG.info('merge existing result: %s', {
                 k: v for k, v in result.items() if k != 'details'})
             _last_merge_result['value'] = result
