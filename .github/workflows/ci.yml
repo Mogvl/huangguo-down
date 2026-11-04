@@ -397,6 +397,27 @@ jobs:
           st.close()
           PY
 
+      - name: 验证 merges 表缺失时封面仍可显示
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.web.app import poster_candidates
+          # 场景：封面只在「剧名 (全N集)/」里，旧目录已删，merges 表为空
+          m = pathlib.Path('/tmp/nomerge/短剧/无记录剧 (全5集)'); m.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(m/'无记录剧 (全5集).mp4')], check=True)
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=120x160:duration=1','-frames:v','1',str(m/'无记录剧 (全5集)-poster.jpg')], check=True)
+          st = StateDB(pathlib.Path('/tmp/nomerge/s.sqlite3'))
+          st.upsert_album(777,'AI成人短剧','无记录剧',5,True,'/tmp/nomerge/短剧/无记录剧 [huangguo-777]')
+          assert st.merge_row(777) is None, 'merges 表应为空'
+          cands = poster_candidates(st, 777)
+          hit = [c for c in cands if c.is_file() and c.stat().st_size > 0]
+          assert hit, f'未找到封面候选: {cands}'
+          assert '无记录剧 (全5集)-poster.jpg' in str(hit[0]), f'命中路径不对: {hit[0]}'
+          print('OK merges 缺失时封面可定位:', hit[0])
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log

@@ -64,6 +64,44 @@ async def lifespan(app: FastAPI):
     yield
 
 
+def poster_candidates(state_db, album_id: int) -> list[Path]:
+    """Every path a cover for this album can live at, best first.
+
+    A merged show keeps its cover next to the movie file as
+    ``<title> (全N集)/<title> (全N集)-poster.jpg``. The merges table is the fast
+    way to find it, but it can be incomplete (older merges, or a merge run
+    without a state handle), so we also scan the library folder for a
+    same-titled movie directory. That keeps covers working even when the
+    bookkeeping is stale.
+    """
+    row = state_db.album_row(album_id) if state_db else None
+    if not row:
+        return []
+    out: list[Path] = []
+    directory = row['directory'] or ''
+    if directory:
+        out.append(Path(directory) / 'poster.jpg')
+    mrow = state_db.merge_row(album_id) if state_db else None
+    if mrow and mrow['path']:
+        movie = Path(mrow['path'])
+        out.append(movie.parent / f'{movie.stem}-poster.jpg')
+    # Fallback: scan the library root for "<title> (全N集)" folders.
+    if directory:
+        from ..core import sanitize_filename
+        lib_root = Path(directory).parent
+        title = (row['title'] or '').strip()
+        if title and lib_root.is_dir():
+            name = sanitize_filename(title)
+            try:
+                for folder in lib_root.glob(f'{name} (全*集)'):
+                    if folder.is_dir():
+                        out.append(folder / f'{folder.name}-poster.jpg')
+                        out.append(folder / 'poster.jpg')
+            except OSError:
+                pass
+    return out
+
+
 def create_app(serve_static: bool = True) -> FastAPI:
     """Build the ASGI app.
 
@@ -153,41 +191,7 @@ def create_app(serve_static: bool = True) -> FastAPI:
         return result
 
     def _poster_candidates(album_id: int) -> list[Path]:
-        """Every path a cover for this album can live at, best first.
-
-        A merged show keeps its cover next to the movie file as
-        ``<title> (全N集)/<title> (全N集)-poster.jpg``. The merges table is the
-        fast way to find it, but it can be incomplete (older merges, or a merge
-        run without a state handle), so we also scan the library folder for a
-        same-titled movie directory. That keeps covers working even when the
-        bookkeeping is stale.
-        """
-        row = _state_db.album_row(album_id) if _state_db else None
-        if not row:
-            return []
-        out: list[Path] = []
-        directory = row['directory'] or ''
-        if directory:
-            out.append(Path(directory) / 'poster.jpg')
-        mrow = _state_db.merge_row(album_id) if _state_db else None
-        if mrow and mrow['path']:
-            movie = Path(mrow['path'])
-            out.append(movie.parent / f'{movie.stem}-poster.jpg')
-        # Fallback: scan the library root for "<title> (全N集)" folders.
-        if directory:
-            from ..core import sanitize_filename
-            lib_root = Path(directory).parent
-            title = (row['title'] or '').strip()
-            if title and lib_root.is_dir():
-                name = sanitize_filename(title)
-                try:
-                    for folder in lib_root.glob(f'{name} (全*集)'):
-                        if folder.is_dir():
-                            out.append(folder / f'{folder.name}-poster.jpg')
-                            out.append(folder / 'poster.jpg')
-                except OSError:
-                    pass
-        return out
+        return poster_candidates(_state_db, album_id)
 
     def _merged_poster_exists(album_id: int, merge_info: dict) -> bool:
         for poster in _poster_candidates(album_id):
