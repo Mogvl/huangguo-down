@@ -470,6 +470,40 @@ jobs:
           print('OK DAEMON=1 下 --cleanup-merged 正常执行')
           PY
 
+      - name: 验证增量合并遗留的多集数文件夹被清理
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.merge_existing import cleanup_merged, merge_library
+          lib = pathlib.Path('/tmp/dupf/短剧')
+          # 同一部剧三个集数的电影文件夹
+          for n in (1,2,3):
+              d = lib/f'多版本剧 (全{n}集)'; d.mkdir(parents=True, exist_ok=True)
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(d/f'多版本剧 (全{n}集).mp4')], check=True)
+          st = StateDB(pathlib.Path('/tmp/dupf/s.sqlite3'))
+          st.upsert_album(5,'AI成人短剧','多版本剧',3,True,str(lib/'多版本剧 [huangguo-5]'))
+          st.mark_merge(5,str(lib/'多版本剧 (全2集)/多版本剧 (全2集).mp4'),2,100)
+          r = cleanup_merged(pathlib.Path('/tmp/dupf'), st)
+          assert r['removed_duplicates'] == 2, f'应删2个: {r}'
+          left = sorted(d.name for d in lib.iterdir() if d.is_dir())
+          assert left == ['多版本剧 (全3集)'], f'应只留全3集: {left}'
+          print('OK 只保留最大集数:', left)
+
+          # merge_library：旧 (全2集) + 新 3 集分集 -> 只留 (全3集)
+          lib2 = pathlib.Path('/tmp/dupf2/短剧')
+          old = lib2/'增量剧 (全2集)'; old.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(old/'增量剧 (全2集).mp4')], check=True)
+          src = lib2/'增量剧 [huangguo-6]'/'Season 01'; src.mkdir(parents=True, exist_ok=True)
+          for i in (1,2,3):
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(src/f'增量剧.S01E0{i}.mp4')], check=True)
+          merge_library(pathlib.Path('/tmp/dupf2'), delete_episodes=True)
+          left2 = sorted(d.name for d in lib2.iterdir() if d.is_dir())
+          assert left2 == ['增量剧 (全3集)'], f'旧文件夹未清理: {left2}'
+          print('OK 合并后旧文件夹已清理:', left2)
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
