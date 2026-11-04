@@ -243,11 +243,12 @@ def merge_videos(sources: list[Path], destination: Path,
             raise FileNotFoundError(src)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    # Keep the .mp4 extension: ffprobe sniffs by content but ffmpeg's muxer
-    # selection still keys off it, and a ".mp4.part" would confuse both.
-    partial = destination.parent / f'.{destination.stem}.merging.mp4'
-    partial.unlink(missing_ok=True)
+    # Write the partial output through tempfile so the name never depends on
+    # the (possibly odd) destination stem -- titles with parentheses, spaces,
+    # or unicode used to produce a '.stem.merging.mp4' that ffmpeg sometimes
+    # failed to materialise, surfacing as an OSError on os.replace.
     workdir = Path(tempfile.mkdtemp(prefix='merge-'))
+    partial = workdir / 'partial.mp4'
     try:
         listing = workdir / 'concat.txt'
         with listing.open('w', encoding='utf-8') as fh:
@@ -278,6 +279,8 @@ def merge_videos(sources: list[Path], destination: Path,
                 raise RuntimeError(
                     f'merge failed: {(exc2.stderr or "").strip()[-800:]}') from exc2
 
+        if not partial.is_file():
+            raise RuntimeError('ffmpeg produced no output file')
         info = probe_media(partial)
         if not info.get('video'):
             raise RuntimeError(f'merged file has no video stream: {info}')
