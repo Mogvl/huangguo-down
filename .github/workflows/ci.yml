@@ -149,12 +149,13 @@ jobs:
             python -m HGXZ.merge_existing /tmp/legacy --dry-run
             test -f "/tmp/legacy/短剧/旧剧 [huangguo-4242]/旧剧.S01E01.mp4" || { echo "dry-run 改动了文件"; exit 1; }
             python -m HGXZ.merge_existing /tmp/legacy
-            test -f "/tmp/legacy/短剧/旧剧 (全2集).mp4" || { echo "未生成合并文件"; exit 1; }
+            test -f "/tmp/legacy/短剧/旧剧 (全2集)/旧剧 (全2集).mp4" || { echo "未生成合并文件"; exit 1; }
             test ! -f "/tmp/legacy/短剧/旧剧 [huangguo-4242]/旧剧.S01E01.mp4" || { echo "分集未删除"; exit 1; }
-            grep -q "老简介" "/tmp/legacy/短剧/旧剧 (全2集).nfo" || { echo "NFO 未继承简介"; exit 1; }
-            d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "/tmp/legacy/短剧/旧剧 (全2集).mp4")
+            test ! -f "/tmp/legacy/短剧/旧剧 (全2集).mp4" || { echo "合并文件未移入独立文件夹"; exit 1; }
+            grep -q "老简介" "/tmp/legacy/短剧/旧剧 (全2集)/旧剧 (全2集).nfo" || { echo "NFO 未继承简介"; exit 1; }
+            d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "/tmp/legacy/短剧/旧剧 (全2集)/旧剧 (全2集).mp4")
             awk -v d="$d" "BEGIN{exit !(d>3.5 && d<4.6)}" || { echo "时长异常: $d"; exit 1; }
-            echo "✓ 旧数据补合并正常（时长 $d）"
+            echo "✓ 旧数据补合并正常（时长 $d，独立文件夹）"
           '
 
       - name: 验证 ffmpeg 可合并视频
