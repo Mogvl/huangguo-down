@@ -73,6 +73,8 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
     if not root.is_dir():
         raise FileNotFoundError(f'media root not found: {root}')
 
+    _migrate_legacy_flat_movies(root)
+
     album_dirs = sorted(p.parent for p in root.rglob('tvshow.nfo'))
     # A folder that only has episodes (no tvshow.nfo) still deserves merging.
     for path in root.rglob('*'):
@@ -85,7 +87,8 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
             continue
         result['albums'] += 1
         title, album_id = _read_title(album_dir)
-        target = album_dir.parent / build_movie_filename(title, len(episodes))
+        from .core import movie_target
+        _dir, target = movie_target(title, len(episodes), album_dir.parent)
 
         if target.is_file() and not force:
             result['skipped'] += 1
@@ -131,6 +134,48 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
     return result
 
 
+def _migrate_legacy_flat_movies(root: Path) -> int:
+    """Move already-merged movies that were written flat next to every other
+    show into their own folder, matching the current Emby-movie layout.
+
+    Older versions (and early adopters of the merge feature) left
+    ``剧名 (全N集).mp4`` directly under the library root. We relocate each such
+    file together with its ``.nfo`` and ``-poster.jpg`` into a dedicated
+    ``剧名 (全N集)/`` folder. Already-folded movies are skipped, and any file
+    still paired with a live ``[huangguo-id]`` source folder is left alone.
+    """
+    pattern = re.compile(r'^(?P<name>.+?) \(全\d+集\)\.mp4$')
+    moved = 0
+    try:
+        for child in root.rglob('*.mp4'):
+            match = pattern.match(child.name)
+            if not match:
+                continue
+            # Relocate only files that sit directly in a library folder (a
+            # direct child of root, e.g. /media/AI成人短剧/剧名 (全N集).mp4),
+            # and only if they are not already inside a same-named show folder.
+            if child.parent.parent != root:
+                continue
+            if child.parent.name == match.group('name'):
+                continue
+            dest_dir = child.parent / child.stem
+            if dest_dir == child.parent:
+                continue
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            for src in (child, child.with_suffix('.nfo')):
+                if src.is_file():
+                    src.replace(dest_dir / src.name)
+            poster = child.with_name(f'{child.stem}-poster.jpg')
+            if poster.is_file():
+                poster.replace(dest_dir / poster.name)
+            moved += 1
+    except OSError as exc:
+        LOG.warning('movie migration interrupted: %s', exc)
+    if moved:
+        LOG.info('migrated %d legacy flat movie(s) into per-show folders', moved)
+    return moved
+
+
 def preview_library(root: Path) -> dict:
     """Cheap count of albums that still have loose episodes.
 
@@ -152,7 +197,8 @@ def preview_library(root: Path) -> dict:
         if not episodes:
             continue
         title, _ = _read_title(album_dir)
-        target = album_dir.parent / build_movie_filename(title, len(episodes))
+        from .core import movie_target
+        _dir, target = movie_target(title, len(episodes), album_dir.parent)
         if target.is_file():
             already += 1
             continue
@@ -197,7 +243,7 @@ def _write_sidecars(album_dir: Path, target: Path, title: str, album_id: int,
                     info.get('duration', 0))
 
     poster = album_dir / 'poster.jpg'
-    movie_poster = target.with_name(f'{target.stem}-poster.jpg')
+    movie_poster = target.parent / f'{target.stem}-poster.jpg'
     if poster.is_file() and not movie_poster.is_file():
         try:
             poster.replace(movie_poster)

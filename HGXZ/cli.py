@@ -332,10 +332,11 @@ class Archiver:
         }
 
     def _merged_path(self, album, album_dir: Path, episode_count: int) -> Path:
-        # Movies live next to the show folder, in a library Emby indexes as
-        # "movies", so one file per show does not collide with the TV layout.
+        # One folder per show, Emby-movie style: library/剧名 (全N集)/剧名 (全N集).mp4
+        from .core import movie_target
         library = album_dir.parent
-        return library / build_movie_filename(album.title, episode_count)
+        _dir, _file = movie_target(album.title, episode_count, library)
+        return _file
 
     def _episode_sources(self, album_id: int, album_dir: Path,
                          numbers: list[int] | None = None, *,
@@ -449,6 +450,12 @@ class Archiver:
             merged_file.with_suffix('.nfo').unlink(missing_ok=True)
             stale_poster = merged_file.with_name(f'{merged_file.stem}-poster.jpg')
             stale_poster.unlink(missing_ok=True)
+            # Drop the now-empty old movie folder so Emby does not keep it.
+            try:
+                if merged_file.parent.is_dir() and not any(merged_file.parent.iterdir()):
+                    merged_file.parent.rmdir()
+            except OSError:
+                pass
 
         deleted = 0
         if conf['delete_episodes']:

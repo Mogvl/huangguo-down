@@ -185,6 +185,20 @@ def build_movie_filename(album_title: str, episode_count: int) -> str:
     return f'{sanitize_filename(album_title)} (全{episode_count}集).mp4'
 
 
+def movie_target(title: str, episode_count: int, library_root: Path) -> tuple[Path, Path]:
+    """Where a merged movie lives: one folder per show, Emby-movie style.
+
+    Returns ``(movie_dir, movie_file)`` where ``movie_dir`` is
+    ``library_root / 剧名 (全N集)`` and the file inside keeps the same name.
+    Keeping each show in its own folder (instead of flat next to every other
+    show) is both tidier and what Emby's movie library expects.
+    """
+    folder = sanitize_filename(title) + f' (全{episode_count}集)'
+    movie_dir = Path(library_root) / folder
+    movie_file = movie_dir / build_movie_filename(title, episode_count)
+    return movie_dir, movie_file
+
+
 def write_movie_nfo(path: Path, album: Album, episode_count: int,
                     duration_seconds: float = 0.0) -> None:
     """Write a ``movie.nfo`` so Emby/Jellyfin shows the show as one film.
