@@ -504,6 +504,44 @@ jobs:
           st.close()
           PY
 
+      - name: 验证合并集数修复与残缺分集不覆盖完整电影
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.merge_existing import (merge_library, repair_merge_counts,
+                                           find_existing_movie, episode_count_from_name)
+          lib = pathlib.Path('/tmp/cnt/短剧')
+          mov = lib/'计数剧 (全5集)'; mov.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=5','-f','lavfi','-i','sine=frequency=400:duration=5','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(mov/'计数剧 (全5集).mp4')], check=True)
+          good = (mov/'计数剧 (全5集).mp4').stat().st_size
+
+          st = StateDB(pathlib.Path('/tmp/cnt/s.sqlite3'))
+          st.upsert_album(11,'AI成人短剧','计数剧',5,True,str(lib/'计数剧 [huangguo-11]'))
+          # 模拟旧 bug：回填写入 merged_episodes=0
+          st.mark_merge(11, str(mov/'计数剧 (全5集).mp4'), 0, good)
+          assert not any(st.episode_done(11,n) for n in range(1,6)), '0 值应判为未下载'
+          repair_merge_counts(st)
+          assert st.merge_row(11)['merged_episodes'] == 5, st.merge_row(11)
+          assert all(st.episode_done(11,n) for n in range(1,6)), '修复后应全部已下载'
+
+          # 残留 2 集：不得把 (全5集) 替换成 (全2集)
+          src = lib/'计数剧 [huangguo-11]'/'Season 01'; src.mkdir(parents=True, exist_ok=True)
+          for i in (1,2):
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(src/f'计数剧.S01E0{i}.mp4')], check=True)
+          found = find_existing_movie(lib, '计数剧')
+          assert found and episode_count_from_name(found.stem) == 5, f'未找到完整电影: {found}'
+          merge_library(pathlib.Path('/tmp/cnt'), delete_episodes=True, state=st)
+          kept = lib/'计数剧 (全5集)'/'计数剧 (全5集).mp4'
+          assert kept.is_file(), '(全5集) 被删除了'
+          assert kept.stat().st_size == good, '完整电影被残缺文件覆盖'
+          left = sorted(d.name for d in lib.iterdir() if d.is_dir())
+          assert left == ['计数剧 (全5集)'], f'应只剩一个文件夹: {left}'
+          assert st.merge_row(11)['merged_episodes'] == 5, st.merge_row(11)
+          print('OK 集数修复且完整电影未被残缺分集覆盖')
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
