@@ -97,6 +97,29 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
             result['skipped'] += 1
             result['details'].append({'dir': str(album_dir), 'status': 'already-merged'})
             LOG.info('skip %s: %s already exists', album_dir.name, target.name)
+            # The movie exists, but stale episode files may still be on disk
+            # (e.g. re-downloaded after an older bug). Point the episode rows at
+            # the movie and, if asked, delete the leftovers so the next sync
+            # does not treat them as missing and fetch the show again.
+            if state is not None and album_id:
+                try:
+                    state.mark_merge(album_id, str(target), len(episodes),
+                                     int(target.stat().st_size))
+                    for ep in episodes:
+                        try:
+                            state.mark_episode(album_id, ep.number, str(target), 'done')
+                        except Exception:
+                            pass
+                except Exception as exc:
+                    LOG.debug('cannot repoint skipped merge %s: %s', album_id, exc)
+            if delete_episodes and not dry_run:
+                for episode in episodes:
+                    try:
+                        episode.path.unlink()
+                        episode.path.with_suffix('.nfo').unlink(missing_ok=True)
+                    except OSError as exc:
+                        LOG.warning('cannot delete %s: %s', episode.path, exc)
+                _prune(album_dir)
             continue
 
         if dry_run:
