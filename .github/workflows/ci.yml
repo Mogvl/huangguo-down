@@ -455,6 +455,21 @@ jobs:
           a.state.close()
           PY
 
+      - name: 验证 DAEMON=1 时子命令不被 daemon 抢走
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import os, subprocess, pathlib
+          # 容器里 DAEMON=1，子命令必须优先，不能去绑 7731/7732
+          env = dict(os.environ, DAEMON='1')
+          r = subprocess.run(['python','-m','HGXZ.cli','--cleanup-merged','--cleanup-dry-run'],
+                             capture_output=True, text=True, env=env, timeout=120)
+          out = (r.stdout or '') + (r.stderr or '')
+          assert 'address already in use' not in out, f'子命令仍在抢端口: {out[-500:]}'
+          assert r.returncode == 0, f'子命令失败 rc={r.returncode}: {out[-500:]}'
+          assert 'removed' in out, f'未输出清理结果: {out[-500:]}'
+          print('OK DAEMON=1 下 --cleanup-merged 正常执行')
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
