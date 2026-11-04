@@ -171,7 +171,8 @@ def create_app(serve_static: bool = True) -> FastAPI:
                 work()
                 mark_sync_finished()
             except Exception as exc:
-                _sync_status['last_error'] = str(exc)
+                from ..cli import describe_error
+                _sync_status['last_error'] = describe_error(exc)
                 LOG.exception('%s failed: %s', name, exc)
             finally:
                 release_sync()

@@ -208,6 +208,26 @@ def drop_privileges() -> None:
                     puid, pgid, exc)
 
 
+def describe_error(exc: Exception) -> str:
+    """Turn an exception into one line the WebUI can actually act on."""
+    from .site import SiteRequestError
+    if isinstance(exc, SiteRequestError):
+        if exc.status == 404:
+            return f'页面不存在(404)：{exc.url}'
+        if exc.status:
+            return f'站点返回 {exc.status}：{exc.url}'
+        return f'无法连接站点：{exc.url}（{exc.args[0].split("<-")[0].strip()}）'
+    return f'{type(exc).__name__}: {exc}'
+
+
+def _is_not_found(exc: Exception) -> bool:
+    """True when the failure is a plain 404, meaning "no such page"."""
+    from urllib.error import HTTPError
+    if isinstance(exc, HTTPError):
+        return exc.code == 404
+    return '404' in str(exc) or 'not found' in str(exc).lower()
+
+
 class Archiver:
     MAX_CATEGORY_PAGES = 100
 
@@ -240,7 +260,19 @@ class Archiver:
             known_total: int | None = None
             while page <= self.MAX_CATEGORY_PAGES:
                 path = category['path'] if page == 1 else category['path'].rstrip('/') + f'/{page}/'
-                html = self.client.get_text(path)
+                try:
+                    html = self.client.get_text(path)
+                except Exception as exc:
+                    # The declared total is not trustworthy: the site advertises
+                    # more albums than it can actually paginate (1416 vs 1398),
+                    # so walking past the real last page answers 404. Treating
+                    # that as "no more pages" is correct; letting it bubble up
+                    # would abort the whole sync and lose every earlier page.
+                    if _is_not_found(exc):
+                        LOG.info('category=%s stopped at page %d (site returned 404)',
+                                 category['name'], page)
+                        break
+                    raise
                 ids, page_total = parse_category_panel(html)
                 if page_total is not None:
                     known_total = page_total
@@ -556,7 +588,7 @@ def run_daemon(config: dict, schedule: str, web_port: int = 7731) -> int:
                         archiver.scan()
                         mark_sync_finished()
                     except Exception as exc:
-                        _sync_status['last_error'] = str(exc)
+                        _sync_status['last_error'] = describe_error(exc)
                         LOG.exception('sync failed')
                     finally:
                         release_sync()

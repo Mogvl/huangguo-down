@@ -12,6 +12,19 @@ import time
 LOG = logging.getLogger(__name__)
 
 
+class SiteRequestError(RuntimeError):
+    """A site request failed, with the URL and status that caused it.
+
+    urllib's bare ``HTTP Error 404: Not Found`` says nothing about which page
+    broke, which makes a WebUI report like that impossible to act on.
+    """
+
+    def __init__(self, url: str, status: int | None, detail: str):
+        self.url = url
+        self.status = status
+        super().__init__(f'{status or "ERR"} {detail} <- {url}')
+
+
 class HuangguoClient:
     def __init__(
         self,
@@ -69,10 +82,19 @@ class HuangguoClient:
                         self.base_url = candidate
                         self._backup_requests = 0
                     return body
-                except (HTTPError, URLError, TimeoutError, ConnectionError, OSError) as error:
+                except HTTPError as error:
+                    # A 404 means the page genuinely does not exist; trying the
+                    # mirrors would just repeat it. Fail fast with the URL kept.
+                    if error.code == 404:
+                        raise SiteRequestError(url, 404, 'Not Found') from error
                     last_error = error
                     if is_absolute or index == len(candidates) - 1:
-                        raise
+                        raise SiteRequestError(url, error.code, str(error.reason)) from error
+                    LOG.warning('site request failed via %s; trying backup: %s', candidate, error)
+                except (URLError, TimeoutError, ConnectionError, OSError) as error:
+                    last_error = error
+                    if is_absolute or index == len(candidates) - 1:
+                        raise SiteRequestError(url, None, str(error)) from error
                     LOG.warning('site request failed via %s; trying backup: %s', candidate, error)
             raise last_error or RuntimeError('site request failed')
         finally:
