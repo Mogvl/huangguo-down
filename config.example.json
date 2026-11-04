@@ -2,6 +2,7 @@
   "site": {
     "base_url": "https://huangguoai.com",
     "backup_urls": [
+      "https://7eae9f.xxbgwypx.cc",
       "https://l5f9m.rxzfszht.cc",
       "https://blolhh.rxzfszht.cc",
       "https://mxz58.rxzfszht.cc",
@@ -12,8 +13,8 @@
       "https://j5rs.rxzfszht.cc",
       "https://lhsb.rxzfszht.cc"
     ],
-    "request_interval": 2,
-    "timeout": 30,
+    "request_interval": 3,
+    "timeout": 45,
     "categories": [
       {
         "name": "AI成人短剧",
@@ -25,7 +26,8 @@
         "path": "/ai-manju/",
         "library": "AI成人漫剧"
       }
-    ]
+    ],
+    "attempts": 2
   },
   "download": {
     "root": "/media",

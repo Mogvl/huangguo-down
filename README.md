@@ -320,8 +320,9 @@ curl http://<NAS的IP>:7732/healthz   # 后端
 | `HGXZ_CONFIG` | `/config/config.json` | 配置文件路径 |
 | `HGXZ_BASE_URL` | 见模板 | 站点主域名 |
 | `HGXZ_BACKUP_URLS` | 见模板 | 备用域名，逗号分隔 |
-| `HGXZ_REQUEST_INTERVAL` | `2` | 请求间隔（秒） |
-| `HGXZ_TIMEOUT` | `30` | 单次请求超时（秒） |
+| `HGXZ_REQUEST_INTERVAL` | `3` | 请求间隔（秒），站点限速时调大 |
+| `HGXZ_TIMEOUT` | `45` | 单次请求超时（秒） |
+| `HGXZ_ATTEMPTS` | `2` | 单域名重试次数（应对 TLS 中断） |
 | `HGXZ_RETRIES` | `3` | 单集重试次数 |
 | `HGXZ_MINIMUM_DURATION` | `3` | 有效视频最短时长（秒） |
 | `HGXZ_RECHECK_DAYS` | `7` | 已完结专辑复查间隔（天） |
@@ -392,6 +393,8 @@ docker exec huangguo-down python -m HGXZ.cli --max-albums 3 --max-episodes 2
 | 容器反复重启 | `docker logs hgxz` 看第一行；多半是 `/config` 没写权限，或 `config.json` JSON 语法错误 |
 | `/healthz` 不通但容器 running | 检查端口映射，以及 `HGXZ_PORT`/`HGXZ_API_PORT` 是否和映射的容器端口一致 |
 | 7731 通、7732 不通 | 后端端口没映射，或 `HGXZ_API_PORT=0` 关掉了；只用 WebUI 的话这不影响使用 |
+| `SSL: UNEXPECTED_EOF_WHILE_READING` | 网络层拦截或站点限速。程序已内置 2 次重试；持续出现就调大 `HGXZ_REQUEST_INTERVAL`，或给容器配代理 |
+| 备用域名 301 跳转 | 旧镜像域名已失效，会跳转到新域名，程序自动跟随。`config.example.json` 里已加入新域名 |
 | `pull access denied for ...` | 镜像名写错（比如残留 `hgxz:nas`），或 GHCR 包是私有的需登录 |
 | `failed to read dockerfile: open Dockerfile` | compose 文件里带了 `build` 段但目录里没有源码；用仓库版的 `docker-compose.yml`（不含 build 段） |
 | 日志 `SSL: WRONG_VERSION_NUMBER` / `404` | DNS 污染，配 `HTTP_PROXY`/`HTTPS_PROXY`，且 `NO_PROXY` 不含站点域名 |

@@ -32,6 +32,7 @@ class HuangguoClient:
         request_interval: float = 2.0,
         timeout: int = 30,
         backup_urls: list[str] | None = None,
+        attempts: int = 2,
     ):
         urls = [base_url, *(backup_urls or [])]
         self.base_urls = list(dict.fromkeys(url.rstrip('/') for url in urls if url))
@@ -43,6 +44,9 @@ class HuangguoClient:
         self.last_request = 0.0
         self.user_agent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36'
         self._backup_requests = 0
+        # TLS resets and EOFs are usually transient (interference, flaky CDN
+        # edges), so retry the same host before failing over to a mirror.
+        self.attempts = max(1, int(attempts))
 
     def _throttle(self) -> None:
         wait = self.request_interval - (time.monotonic() - self.last_request)
@@ -75,8 +79,7 @@ class HuangguoClient:
                 request_headers.update(headers or {})
                 req = Request(url, method=method, data=data, headers=request_headers)
                 try:
-                    with urlopen(req, timeout=self.timeout) as response:
-                        body = response.read()
+                    body = self._fetch_with_retry(req, url)
                     if candidate and candidate != self.base_url:
                         LOG.warning('site base URL switched to: %s', candidate)
                         self.base_url = candidate
@@ -99,6 +102,33 @@ class HuangguoClient:
             raise last_error or RuntimeError('site request failed')
         finally:
             self.last_request = time.monotonic()
+
+    def _fetch_with_retry(self, req: Request, url: str) -> bytes:
+        """Retry a single URL a few times before giving up on this host.
+
+        A TLS handshake that dies with UNEXPECTED_EOF is common on links that
+        get interfered with; the very next attempt usually succeeds, so it is
+        worth one or two immediate retries rather than switching mirrors.
+        """
+        import ssl
+        transient = (ssl.SSLError, ssl.SSLEOFError, ConnectionResetError,
+                     TimeoutError, ConnectionError, OSError)
+        last: Exception | None = None
+        for attempt in range(1, self.attempts + 1):
+            try:
+                with urlopen(req, timeout=self.timeout) as response:
+                    return response.read()
+            except HTTPError:
+                raise
+            except transient as exc:
+                last = exc
+                if attempt >= self.attempts:
+                    raise
+                wait = 1.0 * attempt
+                LOG.warning('attempt %d/%d failed for %s (%s); retrying in %.0fs',
+                            attempt, self.attempts, url, type(exc).__name__, wait)
+                time.sleep(wait)
+        raise last or RuntimeError('request failed')
 
     def get_text(self, path: str) -> str:
         return self._request('GET', path).decode('utf-8', errors='replace')

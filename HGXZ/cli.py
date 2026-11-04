@@ -89,6 +89,9 @@ def apply_env_overrides(config: dict) -> dict:
     timeout = _env_int('HGXZ_TIMEOUT')
     if timeout is not None:
         site['timeout'] = timeout
+    attempts = _env_int('HGXZ_ATTEMPTS')
+    if attempts is not None:
+        site['attempts'] = attempts
 
     # MEDIA_ROOT / DOWNLOAD_ROOT are the names NAS templates tend to use.
     root = _env('HGXZ_MEDIA_ROOT', 'MEDIA_ROOT', 'DOWNLOAD_ROOT')
@@ -251,6 +254,7 @@ class Archiver:
             float(site.get('request_interval', 2)),
             int(site.get('timeout', 30)),
             backup_urls=site.get('backup_urls', []),
+            attempts=int(site.get('attempts', 2)),
         )
         self.root = Path(config['download']['root'])
         self.state = StateDB(Path(config['state']['database']))
@@ -275,6 +279,16 @@ class Archiver:
                 try:
                     html = self.client.get_text(path)
                 except Exception as exc:
+                    # One flaky page must not throw away everything discovered
+                    # so far: the site throttles and drops TLS handshakes under
+                    # load. Retry the page once via a mirror, then keep what we
+                    # have and move on to syncing it.
+                    LOG.warning('category=%s page %d failed (%s); '
+                                'continuing with %d album(s) already found',
+                                category['name'], page, describe_error(exc),
+                                len(category_ids))
+                    if category_ids:
+                        break
                     # The declared total is not trustworthy: the site advertises
                     # more albums than it can actually paginate (1416 vs 1398),
                     # so walking past the real last page answers 404. Treating
