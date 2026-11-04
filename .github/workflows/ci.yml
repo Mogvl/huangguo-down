@@ -132,6 +132,31 @@ jobs:
           print('✓ 合并配置解析正常:', conf)
           PY
 
+      - name: 验证旧数据补合并
+        run: |
+          docker exec hgxz-ci sh -c '
+            set -e
+            mkdir -p "/tmp/legacy/短剧/旧剧 [huangguo-4242]"
+            for i in 1 2; do
+              ffmpeg -hide_banner -loglevel error -y \
+                -f lavfi -i testsrc=size=160x120:rate=10:duration=2 \
+                -f lavfi -i sine=frequency=400:duration=2 \
+                -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest \
+                "/tmp/legacy/短剧/旧剧 [huangguo-4242]/旧剧.S01E0$i.mp4"
+            done
+            printf "<tvshow><title>旧剧</title><plot>老简介</plot><year>2025</year></tvshow>" \
+              > "/tmp/legacy/短剧/旧剧 [huangguo-4242]/tvshow.nfo"
+            python -m HGXZ.merge_existing /tmp/legacy --dry-run
+            test -f "/tmp/legacy/短剧/旧剧 [huangguo-4242]/旧剧.S01E01.mp4" || { echo "dry-run 改动了文件"; exit 1; }
+            python -m HGXZ.merge_existing /tmp/legacy
+            test -f "/tmp/legacy/短剧/旧剧 (全2集).mp4" || { echo "未生成合并文件"; exit 1; }
+            test ! -f "/tmp/legacy/短剧/旧剧 [huangguo-4242]/旧剧.S01E01.mp4" || { echo "分集未删除"; exit 1; }
+            grep -q "老简介" "/tmp/legacy/短剧/旧剧 (全2集).nfo" || { echo "NFO 未继承简介"; exit 1; }
+            d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "/tmp/legacy/短剧/旧剧 (全2集).mp4")
+            awk -v d="$d" "BEGIN{exit !(d>3.5 && d<4.6)}" || { echo "时长异常: $d"; exit 1; }
+            echo "✓ 旧数据补合并正常（时长 $d）"
+          '
+
       - name: 验证 ffmpeg 可合并视频
         run: |
           docker exec hgxz-ci sh -c '

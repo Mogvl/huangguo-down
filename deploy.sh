@@ -139,6 +139,18 @@ do_update() {
     do_up
 }
 
+# 把以前下载的分集合并成单文件。不联网，纯本地操作。
+do_merge() {
+    local args="$*"
+    if ! $DC_BASE ps --status running --quiet 2>/dev/null | grep -q .; then
+        die "容器未运行，先执行 $0 up"
+    fi
+    info "开始合并已有分集${args:+（$args）}"
+    $DC_BASE exec -T huangguo-down \
+        python -m HGXZ.cli --merge-existing $args || die "合并失败，详见上方日志"
+    ok "合并完成"
+}
+
 do_clean() {
     warn "这会删除 $DATA_ROOT 下的状态库和日志（媒体文件不受影响）"
     printf '确认继续？输入 yes：'
@@ -170,6 +182,8 @@ case "${1:-up}" in
     stop)    $DC_BASE stop && ok "已停止" ;;
     down)    $DC_BASE down --remove-orphans && ok "已移除" ;;
     update)  do_update ;;
+    merge)   do_merge ;;
+    merge-dry) do_merge --merge-dry-run ;;
     clean)   do_clean ;;
     *)
         cat <<EOF

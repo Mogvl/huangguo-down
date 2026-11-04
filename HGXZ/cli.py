@@ -848,9 +848,17 @@ def main() -> int:
     parser.add_argument('--max-albums', type=int)
     parser.add_argument('--max-episodes', type=int)
     parser.add_argument('--rebuild-covers', action='store_true')
+    parser.add_argument('--merge-existing', nargs='?', const='', default=None,
+                        metavar='ROOT',
+                        help='把已下载的分集合并成单文件（不联网）；'
+                             '不填路径则用配置里的媒体根目录')
     parser.add_argument('--scan-existing', action='store_true',
                         help='扫描媒体目录，将已有视频注册到状态库')
     parser.add_argument('--json', action='store_true')
+    parser.add_argument('--force-merge', action='store_true',
+                        help='配合 --merge-existing：已有合并文件也重新合并')
+    parser.add_argument('--merge-dry-run', action='store_true',
+                        help='配合 --merge-existing：只列出会做什么，不改动文件')
     parser.add_argument('--daemon', action='store_true',
                         default=_env('DAEMON', default='').lower() in ('1', 'true', 'yes', 'on'),
                         help='常驻运行：启动后同步一次，之后每天定时同步，同时开启 WebUI')
@@ -891,6 +899,20 @@ def main() -> int:
             state.close()
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+
+    if args.merge_existing is not None:
+        from .merge_existing import merge_library
+        merge_conf = config.get('merge') or {}
+        root = Path(args.merge_existing) if args.merge_existing else Path(config['download']['root'])
+        result = merge_library(
+            root,
+            delete_episodes=merge_conf.get('delete_episodes', True),
+            force=bool(args.force_merge),
+            dry_run=bool(args.merge_dry_run))
+        print(json.dumps(result, ensure_ascii=False, indent=2) if args.json
+              else f"扫描 {result['albums']} 个专辑，合并 {result['merged']} 个，"
+                   f"跳过 {result['skipped']} 个，失败 {result['failed']} 个")
+        return 0 if result['failed'] == 0 else 1
 
     if args.rebuild_covers:
         from .rebuild_covers import rebuild

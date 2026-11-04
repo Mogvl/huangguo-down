@@ -197,11 +197,13 @@ def write_movie_nfo(path: Path, album: Album, episode_count: int,
     _sub(root, 'title', album.title)
     _sub(root, 'originaltitle', album.title)
     _sub(root, 'sorttitle', album.title)
-    _sub(root, 'plot', album.plot)
+    if album.plot:
+        _sub(root, 'plot', album.plot)
     if album.year:
         _sub(root, 'year', album.year)
     for tag in [album.category, *album.tags]:
-        _sub(root, 'genre', tag)
+        if tag:
+            _sub(root, 'genre', tag)
     _sub(root, 'studio', '黄果短剧')
     if duration_seconds:
         _sub(root, 'runtime', int(round(duration_seconds / 60)))

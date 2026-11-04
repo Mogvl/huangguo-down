@@ -190,6 +190,42 @@ environment:
 
 旧的 `全3集.mp4` 和它的 NFO 会自动清理，不会留下重复条目。
 
+### 以前下载的怎么办
+
+老版本是一集一个文件。升级后**不用重新下载**，本地就能合并。
+
+先预览会处理哪些剧（不改动任何文件）：
+
+```bash
+./deploy.sh merge-dry
+```
+
+确认无误后执行合并：
+
+```bash
+./deploy.sh merge
+```
+
+它会扫描媒体目录，把每个 `剧名 [huangguo-xxxx]/` 下的分集合成一个 `剧名 (全N集).mp4`，写 NFO、搬封面、删掉分集，和正常同步的结果完全一致。**全程不联网**，站点挂了也能用。
+
+也可以在容器里直接调用：
+
+```bash
+docker exec huangguo-down python -m HGXZ.cli --merge-existing
+docker exec huangguo-down python -m HGXZ.cli --merge-existing --merge-dry-run   # 预览
+docker exec huangguo-down python -m HGXZ.cli --merge-existing --force-merge     # 已有合并文件也重做
+docker exec huangguo-down python -m HGXZ.cli --merge-existing --keep-episodes   # 保留分集
+```
+
+不填路径时用配置里的媒体根目录，也可以显式指定：`--merge-existing /media/黄果/AI成人短剧`。
+
+几点说明：
+
+- 已经合并过的剧会被自动跳过，重复执行没有副作用
+- 旧 `tvshow.nfo` 里的简介、年份、类型会继承到新生成的 `movie.nfo`
+- 分集文件已删、但合并文件还在的剧不会被误处理
+- 想保留分集就加 `--keep-episodes`，会同时留下电影和剧集两个条目
+
 ### 注意
 
 - **合并是不可逆的**：分集删除后如果合并文件损坏，只能重新下载。介意的话把 `HGXZ_MERGE_DELETE` 设为 `0`，保留分集。
