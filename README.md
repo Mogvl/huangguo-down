@@ -154,6 +154,51 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 ---
 
+## 整部合并成一个文件
+
+一部短剧几十上百集，每集一两分钟，分开看很麻烦。开启合并后，程序会把整部剧拼成**一个 mp4**，当作电影交给 Emby。
+
+### 目录变化
+
+```
+/media/AI成人短剧/
+├── 剧名A (全80集).mp4          ← 合并后的整部剧
+├── 剧名A (全80集).nfo          ← movie.nfo，Emby 识别为电影
+└── 剧名A (全80集)-poster.jpg   ← 封面
+```
+
+合并后**分集文件和原来的剧集目录会被删除**，只留这一个文件。
+
+### 开启方式
+
+`docker-compose.yml` 里已经默认开启：
+
+```yaml
+environment:
+  HGXZ_MERGE: "1"                    # 1=开启合并，0=关闭
+  HGXZ_MERGE_DELETE: "1"             # 1=合并后删除分集（省空间）
+  HGXZ_MERGE_ONLY_WHEN_COMPLETE: "0" # 1=只在完结后合并，连载中不合并
+```
+
+### 增量合并
+
+连载中的剧集新增集数时，**不会重新下载整部**。程序把已有合并文件当作前缀，只下载新增的几集，然后拼接：
+
+```
+[已有合并文件(1-3集)] + [新下载的第4集] + [新下载的第5集] → 全5集.mp4
+```
+
+旧的 `全3集.mp4` 和它的 NFO 会自动清理，不会留下重复条目。
+
+### 注意
+
+- **合并是不可逆的**：分集删除后如果合并文件损坏，只能重新下载。介意的话把 `HGXZ_MERGE_DELETE` 设为 `0`，保留分集。
+- 合并需要 ffmpeg 重新封装，一部 80 集的剧大约占用 1-2 分钟 CPU，期间日志会显示 `merging N file(s)`。
+- 合并只在**该剧所有集都下载成功**时进行；有失败集时会跳过，等下次重试成功后再合并。
+- 已经下载好但没合并的旧数据，把 `HGXZ_MERGE` 设为 `1` 再跑一次同步即可补齐。
+
+---
+
 ## 相对原版改了什么
 
 | 问题 | 原版 | 本版 |
@@ -282,6 +327,9 @@ curl http://<NAS的IP>:7732/healthz   # 后端
 | `HGXZ_RECHECK_DAYS` | `7` | 已完结专辑复查间隔（天） |
 | `HGXZ_FAILURE_COOLDOWN_HOURS` | `24` | 失败集冷却时间（小时） |
 | `HGXZ_EPISODE_TIMEOUT` | `1800` | 单集下载超时（秒） |
+| `HGXZ_MERGE` | `0`（compose 里为 `1`） | 是否把整部剧合并成一个文件 |
+| `HGXZ_MERGE_DELETE` | `1` | 合并后是否删除分集 |
+| `HGXZ_MERGE_ONLY_WHEN_COMPLETE` | `0` | 是否只在剧集完结后合并 |
 | `HGXZ_LOG_LEVEL` | `INFO` | 日志级别 |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | 空 | 代理，站点被墙时需要 |
 

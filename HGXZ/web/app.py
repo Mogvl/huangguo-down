@@ -140,6 +140,13 @@ def create_app(serve_static: bool = True) -> FastAPI:
         if not result:
             return JSONResponse({'error': 'not found'}, 404)
         result.update(_state_db.episode_stats(album_id))
+        merge = _state_db.merge_row(album_id)
+        result['merge'] = ({
+            'path': merge['path'],
+            'episodes': merge['merged_episodes'],
+            'size_bytes': merge['size_bytes'],
+            'exists': Path(merge['path']).is_file(),
+        } if merge else None)
         directory = result.get('directory') or ''
         result['poster_available'] = bool(directory) and (Path(directory) / 'poster.jpg').is_file()
         return result
@@ -236,6 +243,7 @@ def create_app(serve_static: bool = True) -> FastAPI:
             'recheck_days': archiver.recheck_days,
             'failure_cooldown_hours': archiver.failure_cooldown_hours,
             'episode_timeout': archiver.episode_timeout,
+            'merge': archiver._merge_config(),
         }
 
     @app.get('/api/sync-status')

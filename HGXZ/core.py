@@ -178,3 +178,35 @@ def write_episode_nfo(path: Path, album: Album, episode: Episode) -> None:
     uid = SubElement(root, 'uniqueid', {'type': 'huangguoai', 'default': 'true'})
     uid.text = f'{album.id}-{episode.number}'
     _write_xml(path, root)
+
+
+def build_movie_filename(album_title: str, episode_count: int) -> str:
+    """Name the merged file like a movie, e.g. ``剧名 (全80集).mp4``."""
+    return f'{sanitize_filename(album_title)} (全{episode_count}集).mp4'
+
+
+def write_movie_nfo(path: Path, album: Album, episode_count: int,
+                    duration_seconds: float = 0.0) -> None:
+    """Write a ``movie.nfo`` so Emby/Jellyfin shows the show as one film.
+
+    A merged multi-episode file is a single video, so it belongs to a movie
+    library rather than a TV library: a ``tvshow.nfo`` next to it would make
+    the scanner try to split it back into episodes.
+    """
+    root = Element('movie')
+    _sub(root, 'title', album.title)
+    _sub(root, 'originaltitle', album.title)
+    _sub(root, 'sorttitle', album.title)
+    _sub(root, 'plot', album.plot)
+    if album.year:
+        _sub(root, 'year', album.year)
+    for tag in [album.category, *album.tags]:
+        _sub(root, 'genre', tag)
+    _sub(root, 'studio', '黄果短剧')
+    if duration_seconds:
+        _sub(root, 'runtime', int(round(duration_seconds / 60)))
+    # The merged file is the whole season, so say so in the metadata.
+    _sub(root, 'tagline', f'全 {episode_count} 集合并')
+    uid = SubElement(root, 'uniqueid', {'type': 'huangguoai', 'default': 'true'})
+    uid.text = str(album.id)
+    _write_xml(path, root)

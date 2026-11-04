@@ -29,6 +29,12 @@ services:
       HGXZ_API_PORT: "7732"
       # NAS 共享目录需要宽松权限，否则 Emby/Jellyfin 读不到文件
       UMASK: "000"
+      # 合并：把整部短剧的所有集拼成一个 mp4，当作电影交给 Emby
+      # enabled=1 打开；delete_episodes=1 合并后删除分集（省空间）
+      HGXZ_MERGE: "1"
+      HGXZ_MERGE_DELETE: "1"
+      # 设为 1 则只在剧集完结后才合并，连载中不合并
+      HGXZ_MERGE_ONLY_WHEN_COMPLETE: "0"
       # 可选：WebUI 共享口令，留空则不鉴权（仅建议内网使用）
       HGXZ_WEB_TOKEN: ""
       # 可选：站点需要代理时取消注释，改成局域网里的真实代理地址

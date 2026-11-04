@@ -629,6 +629,8 @@ async function showDetail(albumId){
                 <dt>最近下载</dt><dd>${esc(fmtTime(a.last_done_at))}</dd>
                 <dt>待下载 / 失败</dt><dd>${missing} 集 / ${failed} 集</dd>
                 <dt>存储路径</dt><dd>${esc(a.directory || '-')}</dd>
+                ${a.merge ? `<dt>合并版</dt><dd>${esc(a.merge.path.split('/').pop())}
+                  <span class="tag ${a.merge.exists ? 'tag-done' : 'tag-failed'}">${a.merge.exists ? '全' + a.merge.episodes + '集 · ' + fmtBytes(a.merge.size_bytes) : '文件缺失'}</span></dd>` : ''}
               </dl>
               <div class="detail-actions">
                 <button class="btn btn-primary btn-sm" onclick="syncAlbum(${a.id})">🔄 同步此专辑</button>

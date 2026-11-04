@@ -9,14 +9,15 @@ import json
 import logging
 import logging.handlers
 import os
+import shutil
 import threading
 import time
 import re
 
-from .core import (Episode, build_episode_filename, parse_category_panel,
-                   parse_detail_html, sanitize_filename, write_episode_nfo,
-                   write_tvshow_nfo)
-from .download import download_hls, probe_media, validate_media
+from .core import (Episode, build_episode_filename, build_movie_filename,
+                   parse_category_panel, parse_detail_html, sanitize_filename,
+                   write_episode_nfo, write_movie_nfo, write_tvshow_nfo)
+from .download import download_hls, merge_videos, probe_media, validate_media
 from .cover import valid_cover, write_cover
 from .site import HuangguoClient
 from .state import StateDB
@@ -104,6 +105,16 @@ def apply_env_overrides(config: dict) -> dict:
         if value is not None:
             download[key] = value
 
+    merge = config.setdefault('merge', {})
+    for key, names in (
+        ('enabled', ('HGXZ_MERGE', 'MERGE_EPISODES')),
+        ('delete_episodes', ('HGXZ_MERGE_DELETE',)),
+        ('only_when_complete', ('HGXZ_MERGE_ONLY_WHEN_COMPLETE',)),
+    ):
+        raw = _env(*names)
+        if raw is not None:
+            merge[key] = raw.lower() in ('1', 'true', 'yes', 'on')
+
     state['database'] = _env('HGXZ_STATE_DB', default=state.get('database'))
     log_conf['directory'] = _env('HGXZ_LOG_DIR', default=log_conf.get('directory'))
     return config
@@ -128,6 +139,7 @@ DEFAULT_CONFIG_TEMPLATE = {
         'failure_cooldown_hours': 24,
         'episode_timeout': 1800,
     },
+    'merge': {'enabled': False, 'delete_episodes': True, 'only_when_complete': False},
     'state': {'database': '/data/state.sqlite3'},
     'log': {'directory': '/logs'},
 }
@@ -294,6 +306,170 @@ class Archiver:
                     seen.add(album_id)
                     out.append((album_id, category))
         return out
+
+    # ---- merging episodes into a single movie file ----
+
+    def _merge_config(self) -> dict:
+        conf = self.config.get('merge') or {}
+        return {
+            'enabled': bool(conf.get('enabled', False)),
+            'delete_episodes': bool(conf.get('delete_episodes', True)),
+            'only_when_complete': bool(conf.get('only_when_complete', False)),
+        }
+
+    def _merged_path(self, album, album_dir: Path, episode_count: int) -> Path:
+        # Movies live next to the show folder, in a library Emby indexes as
+        # "movies", so one file per show does not collide with the TV layout.
+        library = album_dir.parent
+        return library / build_movie_filename(album.title, episode_count)
+
+    def _episode_sources(self, album_id: int, album_dir: Path,
+                         upto: int, start: int = 1) -> list[Path]:
+        """Episode files start..upto, in order.
+
+        A gap inside the requested range would silently drop an episode from
+        the merged movie, so that is treated as "not ready" rather than
+        skipped. Episodes below ``start`` are already inside the existing
+        merged file and are not expected on disk.
+        """
+        season_dir = album_dir / 'Season 01'
+        sources: list[Path] = []
+        missing: list[int] = []
+        for number in range(start, upto + 1):
+            row = self.state.episode_row(album_id, number)
+            candidate = None
+            if row and row['path']:
+                p = Path(row['path'])
+                if p.is_file():
+                    candidate = p
+            if candidate is None:
+                candidate = self._find_episode_video(season_dir, number)
+            if candidate is None:
+                missing.append(number)
+            else:
+                sources.append(candidate)
+        if missing:
+            LOG.warning('album=%s merge skipped: episodes missing %s',
+                        album_id, missing[:10])
+            return []
+        return sources
+
+    def merge_album(self, album, album_dir: Path, limit: int, *,
+                    force: bool = False) -> dict | None:
+        """Merge episodes 1..limit into one movie file, incrementally.
+
+        Deleting the episodes after a merge would otherwise make a later
+        "new episodes appeared" sync impossible to satisfy, so the merge is
+        incremental: the existing merged file is treated as the prefix and only
+        the newly arrived episodes are appended.
+        """
+        conf = self._merge_config()
+        if not conf['enabled']:
+            return None
+        if limit < 1:
+            return None
+
+        row = self.state.merge_row(album.id)
+        merged_upto = int(row['merged_episodes']) if row else 0
+        merged_file = Path(row['path']) if row and row['path'] else None
+
+        # Already up to date and the file still exists.
+        if (not force and merged_file and merged_file.is_file()
+                and merged_upto >= limit):
+            return None
+
+        # Incremental append: the old merged file becomes the first source.
+        prefix: Path | None = None
+        start = 1
+        if (not force and merged_file and merged_file.is_file()
+                and 0 < merged_upto < limit):
+            prefix = merged_file
+            start = merged_upto + 1
+            LOG.info('album=%s incremental merge: have %d, adding %d..%d',
+                     album.id, merged_upto, start, limit)
+
+        # With a prefix in place, episodes 1..merged_upto are already inside
+        # the merged file and were deliberately deleted, so only look for the
+        # new range.
+        sources = self._episode_sources(album.id, album_dir, limit, start=start)
+        if not sources:
+            LOG.info('album=%s merge: no new episode files found', album.id)
+            return None
+
+        target = self._merged_path(album, album_dir, limit)
+        inputs = ([prefix] if prefix is not None else []) + sources
+        LOG.info('album=%s merging %d file(s) -> %s', album.id, len(inputs), target.name)
+        try:
+            info = merge_videos(inputs, target, timeout=None)
+        except Exception as exc:
+            LOG.error('album=%s merge failed: %s', album.id, exc)
+            return {'album_id': album.id, 'merged': False, 'error': str(exc)}
+
+        write_movie_nfo(target.with_suffix('.nfo'), album, limit,
+                        info.get('duration', 0))
+        # Emby looks for "<movie>-poster.jpg" next to the movie file.
+        poster = album_dir / 'poster.jpg'
+        movie_poster = target.with_name(f'{target.stem}-poster.jpg')
+        if poster.is_file() and not movie_poster.is_file():
+            try:
+                shutil.move(str(poster), str(movie_poster))
+            except OSError as exc:
+                LOG.warning('album=%s cannot move poster: %s', album.id, exc)
+        self.state.mark_merge(album.id, str(target), limit, info.get('size', 0))
+
+        # Old file replaced by a new name (episode count changed) -> drop stale
+        # movie + sidecar + poster, otherwise Emby keeps showing the old entry.
+        if prefix is not None and merged_file and merged_file != target:
+            merged_file.unlink(missing_ok=True)
+            merged_file.with_suffix('.nfo').unlink(missing_ok=True)
+            stale_poster = merged_file.with_name(f'{merged_file.stem}-poster.jpg')
+            stale_poster.unlink(missing_ok=True)
+
+        deleted = 0
+        if conf['delete_episodes']:
+            for src in inputs:
+                if src == prefix:
+                    continue
+                try:
+                    src.unlink()
+                    src.with_suffix('.nfo').unlink(missing_ok=True)
+                    deleted += 1
+                except OSError as exc:
+                    LOG.warning('album=%s cannot delete %s: %s', album.id, src, exc)
+            if deleted:
+                LOG.info('album=%s deleted %d episode file(s) after merge',
+                         album.id, deleted)
+                # The TV folder is now empty; Emby would show a phantom show.
+                self._prune_empty_season(album_dir)
+
+        LOG.info('album=%s merged -> %s (%.1f MB, 全%d集)',
+                 album.id, target.name, (info.get('size') or 0) / 1024 / 1024, limit)
+        return {'album_id': album.id, 'merged': True, 'path': str(target),
+                'episodes': limit, 'deleted': deleted}
+
+    @staticmethod
+    @staticmethod
+    def _prune_empty_season(album_dir: Path) -> None:
+        """Remove the TV layout once its episodes were merged away.
+
+        Leaving an empty folder with a ``tvshow.nfo`` behind makes Emby index a
+        phantom show with zero episodes, so the sidecars that only make sense
+        for a TV entry are removed along with the folder.
+        """
+        season_dir = album_dir / 'Season 01'
+        try:
+            if season_dir.is_dir():
+                for leftover in season_dir.iterdir():
+                    leftover.unlink(missing_ok=True)
+                season_dir.rmdir()
+            if album_dir.is_dir():
+                for name in ('tvshow.nfo', 'poster.jpg'):
+                    (album_dir / name).unlink(missing_ok=True)
+                for leftover in album_dir.iterdir():
+                    leftover.unlink(missing_ok=True)
+                album_dir.rmdir()
+        except OSError as exc:
+            LOG.debug('cannot prune %s: %s', album_dir, exc)
 
     def _album_dir(self, album, category: dict) -> Path:
         library = sanitize_filename(category['library'])
@@ -484,8 +660,23 @@ class Archiver:
                           album.id, number, attempt, last)
         if pending and done == limit and not metadata_only:
             LOG.info('album=%s [%s] 全部 %d 集已下载完毕', album.id, album.title, limit)
+
+        # Merge only when every episode up to `limit` is present: a partial
+        # merge would produce a movie with a hole in the middle.
+        merge_result = None
+        if not metadata_only:
+            conf = self._merge_config()
+            ready = (conf['enabled'] and limit > 0 and done >= limit
+                     and not failed_episodes)
+            if ready and conf['only_when_complete'] and not album.ended:
+                LOG.info('album=%s merge deferred: still airing', album.id)
+            elif ready:
+                merge_result = self.merge_album(album, album_dir, limit, force=force)
+
         result = {'album': asdict(album), 'directory': str(album_dir),
                   'episodes_done': done, 'metadata_only': metadata_only}
+        if merge_result:
+            result['merge'] = merge_result
         if failed_episodes:
             result['failed_episodes'] = failed_episodes
             LOG.error('album=%s finished with %d failed episodes: %s',

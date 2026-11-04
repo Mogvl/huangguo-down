@@ -27,6 +27,13 @@ class StateDB:
           last_checked_at TEXT,
           last_changed_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS merges (
+          album_id INTEGER PRIMARY KEY,
+          path TEXT NOT NULL,
+          merged_episodes INTEGER NOT NULL DEFAULT 0,
+          size_bytes INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS episodes (
           album_id INTEGER NOT NULL,
           episode INTEGER NOT NULL,
@@ -223,6 +230,30 @@ class StateDB:
                 'last_done_at': row['last_done_at'],
                 'downloaded_bytes': row['bytes'] or 0,
             }
+
+    # ---- merge tracking ----
+
+    def merge_row(self, album_id: int) -> sqlite3.Row | None:
+        with self._lock:
+            return self.conn.execute(
+                'SELECT * FROM merges WHERE album_id=?', (album_id,)).fetchone()
+
+    def mark_merge(self, album_id: int, path: str, merged_episodes: int,
+                   size_bytes: int = 0) -> None:
+        with self._lock:
+            self.conn.execute('''
+              INSERT INTO merges(album_id,path,merged_episodes,size_bytes,updated_at)
+              VALUES(?,?,?,?,?)
+              ON CONFLICT(album_id) DO UPDATE SET path=excluded.path,
+                merged_episodes=excluded.merged_episodes,
+                size_bytes=excluded.size_bytes, updated_at=excluded.updated_at
+            ''', (album_id, path, merged_episodes, max(0, int(size_bytes)), self._now()))
+            self.conn.commit()
+
+    def clear_merge(self, album_id: int) -> None:
+        with self._lock:
+            self.conn.execute('DELETE FROM merges WHERE album_id=?', (album_id,))
+            self.conn.commit()
 
     def reset_failed(self, album_id: int | None = None) -> int:
         with self._lock:

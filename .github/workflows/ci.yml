@@ -115,6 +115,40 @@ jobs:
           curl -fsS http://127.0.0.1:7732/api/dashboard | grep -q '"albums"' || exit 1
           echo "✓ /api/dashboard 正常"
 
+      - name: 验证合并功能可用
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import sys; sys.path.insert(0, '/app')
+          from HGXZ.cli import Archiver
+          cfg = {'site': {'base_url': 'http://x', 'categories': []},
+                 'download': {'root': '/tmp/m'},
+                 'merge': {'enabled': True, 'delete_episodes': True}}
+          import os; os.makedirs('/tmp/m', exist_ok=True)
+          a = Archiver.__new__(Archiver)
+          a.config = cfg
+          conf = Archiver._merge_config(a)
+          assert conf == {'enabled': True, 'delete_episodes': True,
+                          'only_when_complete': False}, conf
+          print('✓ 合并配置解析正常:', conf)
+          PY
+
+      - name: 验证 ffmpeg 可合并视频
+        run: |
+          docker exec hgxz-ci sh -c '
+            ffmpeg -hide_banner -loglevel error -y \
+              -f lavfi -i testsrc=size=160x120:rate=10:duration=1 \
+              -f lavfi -i sine=frequency=400:duration=1 \
+              -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest /tmp/a.mp4
+            cp /tmp/a.mp4 /tmp/b.mp4
+            printf "file /tmp/a.mp4\nfile /tmp/b.mp4\n" > /tmp/list.txt
+            ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i /tmp/list.txt \
+              -c copy /tmp/out.mp4
+            d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/out.mp4)
+            echo "合并后时长: $d"
+            awk -v d="$d" "BEGIN{exit !(d>1.5 && d<2.6)}" || { echo "时长异常"; exit 1; }
+            echo "✓ ffmpeg 合并链路可用"
+          '
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log

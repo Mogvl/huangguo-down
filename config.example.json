@@ -40,5 +40,10 @@
   },
   "log": {
     "directory": "/logs"
+  },
+  "merge": {
+    "enabled": false,
+    "delete_episodes": true,
+    "only_when_complete": false
   }
 }

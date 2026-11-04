@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -221,3 +222,69 @@ def download_hls(url: str, destination: Path, referer: str, minimum_duration: fl
     except Exception:
         partial.unlink(missing_ok=True)
         raise
+
+
+def merge_videos(sources: list[Path], destination: Path,
+                 timeout: float | None = None) -> dict:
+    """Concatenate several videos into one file, stream-copying when possible.
+
+    All episodes of a show come from the same encoder, so the concat demuxer
+    with ``-c copy`` is lossless and fast. If the audio codec changes midway
+    (some CDNs switch profiles) the copy fails and we fall back to re-encoding
+    only the audio, which is cheap compared to a full transcode.
+
+    The output is written to a temporary sibling and moved into place, so an
+    interrupted merge never leaves a half file where Emby can index it.
+    """
+    if not sources:
+        raise ValueError('merge needs at least one source')
+    for src in sources:
+        if not src.is_file():
+            raise FileNotFoundError(src)
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Keep the .mp4 extension: ffprobe sniffs by content but ffmpeg's muxer
+    # selection still keys off it, and a ".mp4.part" would confuse both.
+    partial = destination.parent / f'.{destination.stem}.merging.mp4'
+    partial.unlink(missing_ok=True)
+    workdir = Path(tempfile.mkdtemp(prefix='merge-'))
+    try:
+        listing = workdir / 'concat.txt'
+        with listing.open('w', encoding='utf-8') as fh:
+            for src in sources:
+                # The concat demuxer treats ' as a quote delimiter.
+                escaped = str(src.resolve()).replace("'", "'\\''")
+                fh.write(f"file '{escaped}'\n")
+
+        base = [
+            'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-y',
+            '-analyzeduration', '100M', '-probesize', '100M',
+            '-fflags', '+igndts+genpts',
+            '-f', 'concat', '-safe', '0', '-i', str(listing),
+            '-avoid_negative_ts', 'make_zero',
+            '-map', '0',
+        ]
+        cmd = base + ['-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', str(partial)]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
+        except subprocess.CalledProcessError as exc:
+            LOG.warning('merge copy failed, retrying with audio transcode: %s',
+                        (exc.stderr or '').strip()[-300:])
+            cmd2 = base + ['-c:v', 'copy', '-c:a', 'aac',
+                           '-movflags', '+faststart', '-f', 'mp4', str(partial)]
+            try:
+                subprocess.run(cmd2, check=True, capture_output=True, text=True, timeout=timeout)
+            except subprocess.CalledProcessError as exc2:
+                raise RuntimeError(
+                    f'merge failed: {(exc2.stderr or "").strip()[-800:]}') from exc2
+
+        info = probe_media(partial)
+        if not info.get('video'):
+            raise RuntimeError(f'merged file has no video stream: {info}')
+        os.replace(partial, destination)
+        return info
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
