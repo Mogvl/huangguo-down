@@ -92,7 +92,20 @@ class StateDB:
             row = self.conn.execute(
                 'SELECT status,path FROM episodes WHERE album_id=? AND episode=?',
                 (album_id, episode)).fetchone()
-            return bool(row and row['status'] == 'done' and Path(row['path']).exists())
+            if row and row['status'] == 'done' and Path(row['path']).exists():
+                return True
+            # A merged show keeps every episode inside a single movie file, and
+            # the per-episode files were deleted on purpose. Treat those episodes
+            # as present as long as the merged movie is still there, otherwise a
+            # sync sees the missing files and re-downloads the whole show.
+            merged = self.conn.execute(
+                'SELECT path,merged_episodes FROM merges WHERE album_id=?',
+                (album_id,)).fetchone()
+            if merged and merged['path']:
+                covered = int(merged['merged_episodes'] or 0)
+                if covered >= episode and Path(merged['path']).is_file():
+                    return True
+            return False
 
     def episode_rows(self, album_id: int) -> list[sqlite3.Row]:
         """All episode rows for an album, used by the merge step to find which

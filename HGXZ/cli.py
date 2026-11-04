@@ -609,16 +609,30 @@ class Archiver:
         self.state.upsert_album(album.id, album.category, album.title,
                                 album.episode_count, album.ended,
                                 str(album_dir))
+        limit = album.episode_count if max_episodes is None else min(album.episode_count, max_episodes)
+        done = 0
+        failed_episodes: list[int] = []
+        pending = [n for n in range(1, limit + 1) if not self.state.episode_done(album.id, n)]
+
+        # A show that is already merged must not resurrect its TV layout: this
+        # method used to unconditionally recreate 剧名 [huangguo-id]/Season 01/
+        # plus tvshow.nfo on every sync, which made merged shows look duplicated
+        # (one movie folder + one empty show folder) even though nothing was
+        # downloaded again. Skip entirely when there is nothing new to fetch.
+        merged_row = self.state.merge_row(album.id)
+        merged_file = Path(merged_row['path']) if merged_row and merged_row['path'] else None
+        if (not force and not metadata_only and not pending
+                and merged_file is not None and merged_file.is_file()):
+            LOG.info('album=%s [%s] 已合并且无新增集, 跳过', album.id, album.title)
+            return {'album_id': album.id, 'skipped': True,
+                    'reason': 'already-merged', 'path': str(merged_file)}
+
         season_dir = album_dir / 'Season 01'
         season_dir.mkdir(parents=True, exist_ok=True)
         write_tvshow_nfo(album_dir / 'tvshow.nfo', album)
         poster = album_dir / 'poster.jpg'
         if not valid_cover(poster):
             self._sync_cover(album, poster)
-        limit = album.episode_count if max_episodes is None else min(album.episode_count, max_episodes)
-        done = 0
-        failed_episodes: list[int] = []
-        pending = [n for n in range(1, limit + 1) if not self.state.episode_done(album.id, n)]
         if pending and not metadata_only:
             LOG.info('album=%s [%s] 开始同步: 待下载 %d/%d 集', album.id, album.title, len(pending), limit)
         for number in range(1, limit + 1):
