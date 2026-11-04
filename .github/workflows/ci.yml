@@ -330,6 +330,32 @@ jobs:
           st.close()
           PY
 
+      - name: 验证已合并剧的残留分集被清理
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.merge_existing import merge_library
+          src = pathlib.Path('/tmp/stale/短剧/残留剧 [huangguo-88]/Season 01')
+          src.mkdir(parents=True, exist_ok=True)
+          for i in (1,2):
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=1','-f','lavfi','-i','sine=frequency=400:duration=1','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(src/f'残留剧.S01E0{i}.mp4')], check=True)
+          movie_dir = pathlib.Path('/tmp/stale/短剧/残留剧 (全2集)'); movie_dir.mkdir(parents=True, exist_ok=True)
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=2','-f','lavfi','-i','sine=frequency=400:duration=2','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(movie_dir/'残留剧 (全2集).mp4')], check=True)
+          st = StateDB(pathlib.Path('/tmp/stale/s.sqlite3'))
+          st.upsert_album(88,'AI成人短剧','残留剧',2,True,'/tmp/stale/短剧/残留剧 [huangguo-88]')
+          for i in (1,2):
+              st.mark_episode(88,i,str(src/f'残留剧.S01E0{i}.mp4'),'done')
+          merge_library(pathlib.Path('/tmp/stale'), state=st)
+          assert not src.parent.exists(), '残留分集目录未清理'
+          rows = st.episode_rows(88)
+          assert all(pathlib.Path(r['path']).exists() for r in rows), 'episodes 未 repoint'
+          pending = [n for n in range(1,3) if not st.episode_done(88,n)]
+          assert pending == [], f'仍待下载: {pending}'
+          print('OK 残留分集已清理且不再重复下载')
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
