@@ -244,10 +244,18 @@ def merge_videos(sources: list[Path], destination: Path,
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Write the partial output through tempfile so the name never depends on
-    # the (possibly odd) destination stem -- titles with parentheses, spaces,
-    # or unicode used to produce a '.stem.merging.mp4' that ffmpeg sometimes
-    # failed to materialise, surfacing as an OSError on os.replace.
-    workdir = Path(tempfile.mkdtemp(prefix='merge-'))
+    # Write the partial output next to the destination, on the same filesystem,
+    # so the final os.replace is a cheap rename. Putting it under /tmp (tmpfs)
+    # makes os.replace fail with EXDEV (Invalid cross-device link) when the
+    # media library is a separate mount, which is the normal NAS setup.
+    workdir = destination.parent / f'.merge-{os.getpid()}'
+    try:
+        workdir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Fall back to a temp dir only if the destination's filesystem rejects
+        # the sidecar directory (e.g. a read-only mount); in that case the
+        # caller's own volume is still where the file ends up via copy.
+        workdir = Path(tempfile.mkdtemp(prefix='merge-'))
     partial = workdir / 'partial.mp4'
     try:
         listing = workdir / 'concat.txt'
@@ -284,10 +292,23 @@ def merge_videos(sources: list[Path], destination: Path,
         info = probe_media(partial)
         if not info.get('video'):
             raise RuntimeError(f'merged file has no video stream: {info}')
-        os.replace(partial, destination)
+        # os.replace is a rename and fails across filesystems (EXDEV); fall back
+        # to a copy+delete so merges onto a separate media mount still work.
+        try:
+            os.replace(partial, destination)
+        except OSError as exc:
+            if getattr(exc, 'errno', None) == 18:  # EXDEV: cross-device
+                shutil.move(str(partial), str(destination))
+            else:
+                raise
         return info
     except Exception:
         partial.unlink(missing_ok=True)
         raise
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        # Only remove the sidecar directory we created next to the destination;
+        # never recurse into a system temp dir we did not fully own.
+        if str(workdir).startswith(str(destination.parent)):
+            shutil.rmtree(workdir, ignore_errors=True)
+        else:
+            shutil.rmtree(workdir, ignore_errors=True)
