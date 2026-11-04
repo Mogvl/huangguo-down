@@ -918,6 +918,10 @@ def main() -> int:
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--force-merge', action='store_true',
                         help='配合 --merge-existing：已有合并文件也重新合并')
+    parser.add_argument('--cleanup-merged', action='store_true',
+                        help='清理已合并剧残留的 TV 剧集目录，并报告重复的电影文件夹')
+    parser.add_argument('--cleanup-dry-run', action='store_true',
+                        help='配合 --cleanup-merged：只报告，不删除')
     parser.add_argument('--merge-dry-run', action='store_true',
                         help='配合 --merge-existing：只列出会做什么，不改动文件')
     parser.add_argument('--daemon', action='store_true',
@@ -965,17 +969,31 @@ def main() -> int:
         from .merge_existing import merge_library
         merge_conf = config.get('merge') or {}
         root = Path(args.merge_existing) if args.merge_existing else Path(config['download']['root'])
-        result = merge_library(
-            root,
-            delete_episodes=merge_conf.get('delete_episodes', True),
-            force=bool(args.force_merge),
-            dry_run=bool(args.merge_dry_run),
-            state=state)
+        state = StateDB(Path(config['state']['database']))
+        try:
+            result = merge_library(
+                root,
+                delete_episodes=merge_conf.get('delete_episodes', True),
+                force=bool(args.force_merge),
+                dry_run=bool(args.merge_dry_run),
+                state=state)
+        finally:
+            state.close()
         print(json.dumps(result, ensure_ascii=False, indent=2) if args.json
               else f"扫描 {result['albums']} 个专辑，合并 {result['merged']} 个，"
                    f"跳过 {result['skipped']} 个，失败 {result['failed']} 个")
-        state.close()
         return 0 if result['failed'] == 0 else 1
+
+    if args.cleanup_merged:
+        from .merge_existing import cleanup_merged
+        state = StateDB(Path(config['state']['database']))
+        try:
+            result = cleanup_merged(Path(config['download']['root']), state,
+                                    dry_run=bool(args.cleanup_dry_run))
+        finally:
+            state.close()
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
 
     if args.rebuild_covers:
         from .rebuild_covers import rebuild
@@ -986,7 +1004,11 @@ def main() -> int:
             int(site.get('timeout', 30)),
             backup_urls=site.get('backup_urls', []),
         )
-        result = rebuild(Path(config['download']['root']), client)
+        state = StateDB(Path(config['state']['database']))
+        try:
+            result = rebuild(Path(config['download']['root']), client, state=state)
+        finally:
+            state.close()
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result['failed'] == 0 else 1
 

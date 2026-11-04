@@ -15,8 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import json
+import glob
 import logging
 import re
+import shutil
 
 from .core import build_movie_filename, write_movie_nfo, sanitize_filename
 from .download import merge_videos, probe_media
@@ -276,6 +278,95 @@ def _backfill_merge_table(root: Path, state) -> int:
     if pathed:
         LOG.info('backfilled %d merged movie(s) into merges table', pathed)
     return pathed
+
+def cleanup_merged(root: Path, state, *, dry_run: bool = False) -> dict:
+    """Tidy up leftovers around already-merged shows.
+
+    A merged show should only exist as ``剧名 (全N集)/``. Older versions of the
+    sync recreated the TV layout (``剧名 [huangguo-id]/Season 01/`` plus
+    ``tvshow.nfo``) on every run even after the episodes were merged away, so
+    libraries ended up with an empty show folder next to the movie. This removes
+    those empty leftovers (after rescuing any cover they still hold) and reports
+    duplicate movie folders for the same show.
+
+    Nothing is deleted when the show folder still contains videos: those are
+    real downloads, not leftovers.
+    """
+    from .core import sanitize_filename
+    result = {'removed': 0, 'rescued_posters': 0, 'duplicates': [],
+              'skipped': 0}
+    try:
+        rows = state.merge_rows_with_titles()
+    except Exception as exc:
+        LOG.warning('cannot read merges: %s', exc)
+        return result
+
+    for row in rows:
+        movie = Path(row['path'])
+        if not movie.is_file():
+            continue
+        lib = movie.parent.parent
+        title = (row.get('title') or '').strip()
+        if not title or not lib.is_dir():
+            continue
+        name = sanitize_filename(title)
+        movie_poster = movie.parent / f'{movie.stem}-poster.jpg'
+        # Report sibling movie folders for the same title (e.g. 全5集 and 全6集
+        # left behind by an old incremental merge).
+        try:
+            siblings = [d for d in lib.glob(glob.escape(f'{name}') + ' (全*集)')
+                        if d.is_dir() and d != movie.parent]
+        except OSError:
+            siblings = []
+        if siblings:
+            result['duplicates'].append(
+                {'title': title, 'keep': str(movie.parent),
+                 'others': [str(d) for d in siblings]})
+        # NOTE: glob treats [huangguo-*] as a character class, so match the
+        # show folder names with the ALBUM_PATTERN regex instead.
+        try:
+            candidates = [d for d in lib.iterdir()
+                          if d.is_dir() and d.name.startswith(f'{name} [huangguo-')
+                          and ALBUM_PATTERN.match(d.name)]
+        except OSError:
+            candidates = []
+        for show_dir in candidates:
+            if not show_dir.is_dir():
+                continue
+            try:
+                has_video = any(show_dir.rglob('*.mp4'))
+            except OSError:
+                has_video = True
+            if has_video:
+                result['skipped'] += 1
+                continue
+            # Rescue a cover that only lives in the show folder.
+            poster = show_dir / 'poster.jpg'
+            if poster.is_file() and not movie_poster.is_file():
+                if dry_run:
+                    result['rescued_posters'] += 1
+                else:
+                    try:
+                        poster.replace(movie_poster)
+                        result['rescued_posters'] += 1
+                    except OSError as exc:
+                        LOG.warning('cannot move poster for %s: %s', title, exc)
+            if dry_run:
+                result['removed'] += 1
+                LOG.info('[dry-run] would remove leftover %s', show_dir)
+                continue
+            try:
+                shutil.rmtree(show_dir)
+                result['removed'] += 1
+                LOG.info('removed leftover show folder %s', show_dir)
+            except OSError as exc:
+                LOG.warning('cannot remove %s: %s', show_dir, exc)
+    if result['duplicates']:
+        for item in result['duplicates']:
+            LOG.warning('duplicate movie folders for %s: keep %s, also %s',
+                        item['title'], item['keep'], item['others'])
+    return result
+
 
 def preview_library(root: Path) -> dict:
     """Cheap count of albums that still have loose episodes.
