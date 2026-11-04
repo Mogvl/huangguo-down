@@ -950,9 +950,12 @@ def main() -> int:
             logging.getLogger('HGXZ').warning('failed to set umask=%s: %s', umask_val, exc)
     config = ensure_config(Path(args.config))
 
-    if args.daemon:
-        return run_daemon(config, args.schedule, args.port)
-
+    # NOTE: explicit subcommands must win over daemon mode. The container sets
+    # DAEMON=1, which makes --daemon default to True, so checking it first sent
+    # every one-shot command (--merge-existing, --cleanup-merged, ...) into
+    # run_daemon(), where it tried to bind 7731/7732 that the running service
+    # already holds and died with "address already in use". Fall through to the
+    # daemon only when no subcommand was requested.
     if args.scan_existing:
         from .scanner import scan_existing
         state = StateDB(Path(config['state']['database']))
@@ -1011,6 +1014,9 @@ def main() -> int:
             state.close()
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result['failed'] == 0 else 1
+
+    if args.daemon:
+        return run_daemon(config, args.schedule, args.port)
 
     archiver = Archiver(config)
     try:
