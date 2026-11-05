@@ -30,8 +30,20 @@ _last_merge_result: dict = {}
 _sync_lock = Lock()
 
 
-def try_acquire_sync() -> bool:
-    """Claim the single sync slot. False means one is already running."""
+def try_acquire_sync(*, ignore_pause: bool = False) -> bool:
+    """Claim the single sync slot. False means one is already running.
+
+    A paused library refuses new work so the user can stop downloads without
+    killing the container. ``ignore_pause`` is for housekeeping that must still
+    be able to run (nothing currently needs it, kept for clarity).
+    """
+    if not ignore_pause and _state_db is not None:
+        try:
+            if _state_db.sync_paused():
+                _sync_status['paused'] = True
+                return False
+        except Exception:
+            pass
     if not _sync_lock.acquire(blocking=False):
         return False
     _sync_status['running'] = True
@@ -236,11 +248,30 @@ def create_app(serve_static: bool = True) -> FastAPI:
         threading.Thread(target=_run, daemon=True, name=name).start()
         return True
 
+    @app.get('/api/sync-paused')
+    async def get_paused():
+        paused = bool(_state_db.sync_paused()) if _state_db else False
+        _sync_status['paused'] = paused
+        return {'paused': paused}
+
+    @app.post('/api/sync-paused')
+    async def set_paused(payload: dict | None = None):
+        if _state_db is None:
+            return JSONResponse({'error': 'not ready'}, 503)
+        body = payload or {}
+        paused = bool(body.get('paused', True))
+        _state_db.set_sync_paused(paused)
+        _sync_status['paused'] = paused
+        LOG.info('同步已%s', '暂停' if paused else '恢复')
+        return {'paused': paused}
+
     @app.post('/api/sync')
     async def trigger_sync(album_id: int | None = None):
         if not _archiver_ref:
             return JSONResponse({'error': 'not ready'}, 503)
         archiver = _archiver_ref[0]
+        if _state_db is not None and _state_db.sync_paused():
+            return JSONResponse({'error': '同步已暂停，请先点「恢复同步」'}, 409)
         if not _start_background('manual-sync',
                                  lambda: archiver.scan(only_id=album_id)):
             return JSONResponse({'error': '同步正在进行中'}, 409)
@@ -335,6 +366,13 @@ def create_app(serve_static: bool = True) -> FastAPI:
 
     @app.get('/api/sync-status')
     async def sync_status():
+        # The pause flag lives in the DB so it survives restarts; report it
+        # alongside the in-memory run state.
+        if _state_db is not None:
+            try:
+                _sync_status['paused'] = bool(_state_db.sync_paused())
+            except Exception:
+                pass
         return _sync_status
 
     @app.websocket('/ws/logs')

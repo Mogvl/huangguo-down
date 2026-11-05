@@ -219,6 +219,7 @@ header .container{display:flex;align-items:center;justify-content:space-between;
     <div class="header-actions">
       <button class="btn btn-ghost" id="btn-merge">🎬 合并旧数据</button>
       <button class="btn btn-ghost" id="btn-scan">📂 扫描已有</button>
+      <button class="btn btn-ghost" id="btn-pause">⏸ 暂停同步</button>
       <button class="btn btn-primary" id="btn-sync">🔄 立即同步</button>
     </div>
   </div>
@@ -348,6 +349,10 @@ function toast(msg, isErr){
 async function api(path, opts){
   opts = Object.assign({}, opts);
   if (TOKEN) opts.headers = Object.assign({}, opts.headers, {'X-HGXZ-Token': TOKEN});
+  if (opts.body && typeof opts.body === 'object') {
+    opts.headers = Object.assign({}, opts.headers, {'Content-Type': 'application/json'});
+    opts.body = JSON.stringify(opts.body);
+  }
   const r = await fetch(API + path, opts);
   if (!r.ok) {
     let detail = '';
@@ -498,9 +503,17 @@ function updateSync(sync){
   const detail = document.getElementById('sync-detail');
   detail.textContent = sync.last_error ? ('错误：' + sync.last_error).slice(0, 120) : '';
   document.getElementById('last-sync').textContent = '上次同步：' + (sync.last_sync || '-');
-  document.getElementById('btn-sync').disabled = !!sync.running;
+  document.getElementById('btn-sync').disabled = !!sync.running || !!sync.paused;
   document.getElementById('btn-scan').disabled = !!sync.running;
   document.getElementById('btn-merge').disabled = !!sync.running;
+  const pauseBtn = document.getElementById('btn-pause');
+  pauseBtn.textContent = sync.paused ? '▶ 恢复同步' : '⏸ 暂停同步';
+  pauseBtn.classList.toggle('btn-primary', !!sync.paused);
+  pauseBtn.classList.toggle('btn-ghost', !sync.paused);
+  if (sync.paused) {
+    document.getElementById('sync-text').textContent = '已暂停';
+    document.getElementById('sync-dot').className = 'dot idle';
+  }
 }
 
 /* ---------------- albums ---------------- */
@@ -668,6 +681,17 @@ document.getElementById('btn-sync').addEventListener('click', async () => {
     updateSync({running: true, last_sync: null, last_error: null});
   } catch(e) { toast('启动失败：' + e.message, true); }
 });
+document.getElementById('btn-pause').addEventListener('click', async () => {
+  const st = await api('/api/sync-paused');
+  const next = !st.paused;
+  if (next && !confirm('暂停后不会再自动下载新剧集，正在进行的同步会继续跑完。确定暂停？')) return;
+  try {
+    const r = await api('/api/sync-paused', {method: 'POST', body: {paused: next}});
+    toast(r.paused ? '已暂停同步' : '已恢复同步');
+    updateSync(await api('/api/sync-status'));
+  } catch(e) { toast('操作失败：' + e.message, true); }
+});
+
 document.getElementById('btn-scan').addEventListener('click', async () => {
   if (!confirm('扫描媒体目录，将已有视频注册进状态库（不会重复下载）？')) return;
   try {

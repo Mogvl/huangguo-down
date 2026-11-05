@@ -43,6 +43,10 @@ class StateDB:
           size_bytes INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY(album_id, episode)
         );
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
         ''')
         self.conn.commit()
         self._migrate()
@@ -321,6 +325,28 @@ class StateDB:
                 'last_done_at': row['last_done_at'],
                 'downloaded_bytes': downloaded,
             }
+
+    # ---- settings ----
+
+    def get_setting(self, key: str, default: str = "") -> str:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO settings(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, str(value)))
+            self.conn.commit()
+
+    def sync_paused(self) -> bool:
+        return self.get_setting("sync_paused", "0") in ("1", "true", "yes", "on")
+
+    def set_sync_paused(self, paused: bool) -> None:
+        self.set_setting("sync_paused", "1" if paused else "0")
 
     # ---- merge tracking ----
 

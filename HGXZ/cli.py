@@ -878,7 +878,9 @@ def run_daemon(config: dict, schedule: str, web_port: int = 7731) -> int:
                 # Manual syncs (WebUI) and this loop must never run
                 # concurrently: they would download the same episode into the
                 # same .part file.
-                if not try_acquire_sync():
+                if archiver.state.sync_paused():
+                    LOG.info('同步处于暂停状态，跳过本次定时同步')
+                elif not try_acquire_sync():
                     LOG.warning('scheduled sync skipped: another sync is already running')
                 else:
                     try:

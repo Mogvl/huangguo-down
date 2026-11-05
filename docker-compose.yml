@@ -22,8 +22,9 @@ services:
       TZ: Asia/Shanghai
       # 每日自动同步时间（HH:MM，24 小时制）
       SCHEDULE: "03:30"
-      # 启动时立刻同步一次；设 0 则只在定时点跑
-      HGXZ_SYNC_ON_START: "1"
+      # 启动时是否立刻同步一次。默认 0：打开网页不会突然开始下载，
+      # 想立刻下载就点「立即同步」，或到定时点自动跑
+      HGXZ_SYNC_ON_START: "0"
       # 前端 / 后端端口
       HGXZ_PORT: "7731"
       HGXZ_API_PORT: "7732"
