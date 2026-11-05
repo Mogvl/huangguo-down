@@ -578,6 +578,33 @@ jobs:
           st.close()
           PY
 
+      - name: 验证老平铺路径被迁移回写且容量正确
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.merge_existing import repair_merge_counts
+          lib = pathlib.Path('/tmp/reloc/短剧')
+          d = lib/'迁移剧 (全2集)'; d.mkdir(parents=True, exist_ok=True)
+          movie = d/'迁移剧 (全2集).mp4'
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=2','-f','lavfi','-i','sine=frequency=400:duration=2','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(movie)], check=True)
+          real = movie.stat().st_size
+          st = StateDB(pathlib.Path('/tmp/reloc/s.sqlite3'))
+          st.upsert_album(31,'AI成人短剧','迁移剧',2,True,str(lib/'迁移剧 [huangguo-31]'))
+          # 老平铺路径 + size 0
+          st.mark_merge(31, str(lib/'迁移剧 (全2集).mp4'), 2, 0)
+          assert not pathlib.Path(st.merge_row(31)['path']).is_file(), '前置条件错误'
+          repair_merge_counts(st)
+          row = st.merge_row(31)
+          assert pathlib.Path(row['path']).is_file(), f"路径未迁移: {row['path']}"
+          assert row['path'] == str(movie), row['path']
+          assert row['size_bytes'] == real, f"容量未写: {row['size_bytes']} vs {real}"
+          assert st.dashboard_stats()['downloaded_bytes'] == real
+          assert st.merge_rows_with_titles()[0]['size_bytes'] == real
+          print('OK 老平铺路径已回写且容量正确', real)
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
