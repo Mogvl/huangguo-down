@@ -605,6 +605,31 @@ jobs:
           st.close()
           PY
 
+      - name: 验证路径搬移在集数与大小已正确时也会回写
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.merge_existing import repair_merge_counts
+          lib = pathlib.Path('/tmp/reloc2/短剧')
+          d = lib/'搬移剧 (全9集)'; d.mkdir(parents=True, exist_ok=True)
+          movie = d/'搬移剧 (全9集).mp4'
+          subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=2','-f','lavfi','-i','sine=frequency=400:duration=2','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(movie)], check=True)
+          real = movie.stat().st_size
+          st = StateDB(pathlib.Path('/tmp/reloc2/s.sqlite3'))
+          st.upsert_album(41,'AI成人短剧','搬移剧',9,True,str(lib/'搬移剧 [huangguo-41]'))
+          # 集数与大小都已正确，只有 path 是老平铺路径
+          st.mark_merge(41, str(lib/'搬移剧 (全9集).mp4'), 9, real)
+          assert not pathlib.Path(st.merge_row(41)['path']).is_file()
+          fixed = repair_merge_counts(st)
+          assert fixed == 1, f'应回写1条: {fixed}'
+          assert pathlib.Path(st.merge_row(41)['path']) == movie, st.merge_row(41)['path']
+          missing = [r for r in st.merge_rows_with_titles() if not pathlib.Path(r['path']).is_file()]
+          assert not missing, f'仍有缺失: {missing}'
+          print('OK 集数大小已正确时仍会回写新路径')
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
