@@ -630,6 +630,31 @@ jobs:
           st.close()
           PY
 
+      - name: 验证同步暂停开关
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.web.app import try_acquire_sync, release_sync, set_shared_state, _sync_status
+          st = StateDB(pathlib.Path('/tmp/pause/s.sqlite3'))
+          set_shared_state(st, None, [])
+          assert not st.sync_paused(), '默认不应暂停'
+          assert try_acquire_sync(), '未暂停时应能拿到同步槽'
+          release_sync()
+
+          st.set_sync_paused(True)
+          assert st.sync_paused()
+          assert not try_acquire_sync(), '暂停时不应允许同步'
+          assert _sync_status.get('paused') is True
+
+          st.set_sync_paused(False)
+          assert not st.sync_paused()
+          assert try_acquire_sync(), '恢复后应能同步'
+          release_sync()
+          print('OK 暂停开关生效且可持久化')
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
