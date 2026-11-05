@@ -542,6 +542,42 @@ jobs:
           st.close()
           PY
 
+      - name: 验证合并后已下载容量不丢失
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import subprocess, pathlib
+          from HGXZ.state import StateDB
+          from HGXZ.merge_existing import merge_library, repair_merge_counts
+          lib = pathlib.Path('/tmp/sizec/短剧')
+          src = lib/'容量剧 [huangguo-21]'/'Season 01'; src.mkdir(parents=True, exist_ok=True)
+          total_before = 0
+          for i in (1,2,3):
+              f = src/f'容量剧.S01E0{i}.mp4'
+              subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc=size=160x120:rate=10:duration=2','-f','lavfi','-i','sine=frequency=400:duration=2','-c:v','libx264','-preset','ultrafast','-pix_fmt','yuv420p','-c:a','aac','-shortest',str(f)], check=True)
+              total_before += f.stat().st_size
+          st = StateDB(pathlib.Path('/tmp/sizec/s.sqlite3'))
+          st.upsert_album(21,'AI成人短剧','容量剧',3,True,str(lib/'容量剧 [huangguo-21]'))
+          for i in (1,2,3):
+              st.mark_episode(21,i,str(src/f'容量剧.S01E0{i}.mp4'),'done',(src/f'容量剧.S01E0{i}.mp4').stat().st_size)
+          assert st.dashboard_stats()['downloaded_bytes'] == total_before
+          merge_library(pathlib.Path('/tmp/sizec'), delete_episodes=True, state=st)
+          movie = lib/'容量剧 (全3集)'/'容量剧 (全3集).mp4'
+          assert movie.is_file(), '未生成合并文件'
+          real = movie.stat().st_size
+          got = st.dashboard_stats()['downloaded_bytes']
+          assert got == real, f'容量不符: 统计 {got} vs 实际 {real}'
+          assert got > 0, '容量塌成 0'
+          assert st.episode_stats(21)['downloaded_bytes'] == real, '单剧容量不符'
+          assert st.merge_row(21)['size_bytes'] == real, 'merges.size_bytes 未记录'
+
+          # 历史脏数据（size_bytes=0）也能被修好
+          st.mark_merge(21, str(movie), 3, 0)
+          repair_merge_counts(st)
+          assert st.merge_row(21)['size_bytes'] == real, '历史 size 未修复'
+          print('OK 合并后容量保持', real, 'bytes')
+          st.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
