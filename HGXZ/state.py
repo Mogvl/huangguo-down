@@ -333,7 +333,8 @@ class StateDB:
         """Every recorded merge with its album title, for cover rebuilding."""
         with self._lock:
             return [dict(x) for x in self.conn.execute(
-                '''SELECT m.album_id, m.path, m.merged_episodes, a.title
+                '''SELECT m.album_id, m.path, m.merged_episodes, m.size_bytes,
+                          a.title
                    FROM merges m LEFT JOIN albums a ON a.id = m.album_id
                    ORDER BY m.album_id''')]
 

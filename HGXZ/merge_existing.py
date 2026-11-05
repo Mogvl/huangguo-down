@@ -286,6 +286,21 @@ def repair_merge_counts(state, *, dry_run: bool = False) -> int:
         if not path:
             continue
         movie = Path(path)
+        # Older rows still hold the flat layout path
+        # (库/剧名 (全N集).mp4) while the file now lives inside a folder
+        # (库/剧名 (全N集)/剧名 (全N集).mp4). Follow the move.
+        relocated = None
+        if not movie.is_file():
+            for cand in (movie.parent / movie.stem / movie.name,
+                         find_existing_movie(movie.parent, row.get('title') or '')):
+                if cand and cand.is_file():
+                    relocated = cand
+                    break
+        if relocated is not None:
+            LOG.info('relocate merge row %s: %s -> %s',
+                     row.get('title'), path, relocated)
+            movie = relocated
+            path = str(relocated)
         want = episode_count_from_name(movie.stem)
         have = int(row.get('merged_episodes') or 0)
         size_have = int(row.get('size_bytes') or 0)
