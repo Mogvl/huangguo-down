@@ -311,7 +311,10 @@ def repair_merge_counts(state, *, dry_run: bool = False) -> int:
             size_want = 0
         count_ok = want <= 0 or want == have
         size_ok = not size_want or size_want == size_have
-        if count_ok and size_ok:
+        # A relocation must be persisted even when count and size already agree:
+        # otherwise the corrected path is recomputed and thrown away every run,
+        # leaving the row pointing at a file that no longer exists.
+        if count_ok and size_ok and relocated is None:
             continue
         target_count = want if want > 0 else have
         if dry_run:
