@@ -257,9 +257,29 @@ class StateDB:
                       FROM episodes GROUP BY album_id) e ON e.album_id = a.id
                 WHERE a.episode_count > 0 AND e.d >= a.episode_count
             ''').fetchone()['c']
+            # Merged shows keep their whole size in one movie file; their
+            # episode rows are just pointers. Count the movie once and skip the
+            # pointers, otherwise the total either collapses (pointer rows were
+            # written with size 0) or double-counts.
+            merged_rows = self.conn.execute(
+                'SELECT path, size_bytes FROM merges').fetchall()
+            merged_bytes = 0
+            merged_albums = 0
+            for row in merged_rows:
+                merged_albums += 1
+                if not row['path']:
+                    continue
+                movie = Path(row['path'])
+                try:
+                    actual = movie.stat().st_size if movie.is_file() else 0
+                except OSError:
+                    actual = 0
+                merged_bytes += actual or int(row['size_bytes'] or 0)
             bytes_total = self.conn.execute(
-                "SELECT COALESCE(SUM(size_bytes), 0) AS c FROM episodes WHERE status='done'"
-            ).fetchone()['c']
+                '''SELECT COALESCE(SUM(e.size_bytes), 0) AS c FROM episodes e
+                   LEFT JOIN merges m ON m.album_id = e.album_id
+                   WHERE e.status='done' AND m.album_id IS NULL'''
+            ).fetchone()['c'] + merged_bytes
             categories = [row['category'] for row in self.conn.execute(
                 'SELECT DISTINCT category FROM albums ORDER BY category')]
             return {
@@ -284,11 +304,22 @@ class StateDB:
                   COALESCE(SUM(CASE WHEN status='done' THEN size_bytes ELSE 0 END), 0) AS bytes
                 FROM episodes WHERE album_id=?
             ''', (album_id,)).fetchone()
+            merged = self.conn.execute(
+                'SELECT path, size_bytes FROM merges WHERE album_id=?',
+                (album_id,)).fetchone()
+            downloaded = row['bytes'] or 0
+            if merged and merged['path']:
+                movie = Path(merged['path'])
+                try:
+                    actual = movie.stat().st_size if movie.is_file() else 0
+                except OSError:
+                    actual = 0
+                downloaded = actual or int(merged['size_bytes'] or 0)
             return {
                 'done': row['done'] or 0,
                 'failed': row['failed'] or 0,
                 'last_done_at': row['last_done_at'],
-                'downloaded_bytes': row['bytes'] or 0,
+                'downloaded_bytes': downloaded,
             }
 
     # ---- merge tracking ----

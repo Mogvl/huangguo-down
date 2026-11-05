@@ -372,6 +372,19 @@ class Archiver:
                         album_id, len(missing), missing[:10])
         return sources
 
+    @staticmethod
+    def _merge_covered(target, album, conf) -> int:
+        """Episode count a merged movie covers (parsed from its name)."""
+        import re as _re
+        m = _re.search(r'\(全(\d+)集\)', getattr(target, 'stem', ''))
+        if m:
+            return int(m.group(1))
+        limit = album.episode_count or 0
+        max_episodes = conf.get('max_episodes')
+        if max_episodes:
+            limit = min(limit, int(max_episodes))
+        return max(1, limit)
+
     def merge_album(self, album, album_dir: Path, limit: int, *,
                     force: bool = False) -> dict | None:
         """Merge episodes 1..limit into one movie file, incrementally.
@@ -449,10 +462,19 @@ class Archiver:
         # single source of truth now; leaving stale paths would make sync think
         # every episode is missing and re-fetch all of them.
         try:
+            # Spread the movie's size over the episodes it contains, otherwise
+            # the dashboard loses the whole show's bytes (they used to be
+            # recorded as 0 when the rows were repointed).
+            covered = self._merge_covered(target, album, conf)
+            share = 0
+            try:
+                share = int(target.stat().st_size) // max(1, covered)
+            except OSError:
+                share = 0
             for rec in self.state.episode_rows(album.id):
                 if rec.get('status') == 'done':
                     self.state.mark_episode(album.id, rec['episode'],
-                                            str(target), 'done')
+                                            str(target), 'done', share)
         except Exception as exc:
             LOG.warning('album=%s cannot repoint episodes to merge: %s',
                         album.id, exc)

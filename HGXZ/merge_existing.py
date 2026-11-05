@@ -126,11 +126,13 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
                     # The movie name is authoritative: a leftover folder may
                     # hold only a few episodes of a much longer merged movie.
                     covered = max(len(episodes), episode_count_from_name(target.stem))
-                    state.mark_merge(album_id, str(target), covered,
-                                     int(target.stat().st_size))
+                    movie_bytes = int(target.stat().st_size)
+                    state.mark_merge(album_id, str(target), covered, movie_bytes)
+                    share = movie_bytes // max(1, covered)
                     for ep in episodes:
                         try:
-                            state.mark_episode(album_id, ep.number, str(target), 'done')
+                            state.mark_episode(album_id, ep.number, str(target),
+                                               'done', share)
                         except Exception:
                             pass
                 except Exception as exc:
@@ -181,13 +183,15 @@ def merge_library(root: Path, *, delete_episodes: bool = True,
         if state is not None and album_id:
             try:
                 covered = max(len(episodes), episode_count_from_name(target.stem))
-                state.mark_merge(album_id, str(target), covered,
-                                 int((info or {}).get('size', 0)))
+                movie_bytes = int((info or {}).get('size', 0))
+                state.mark_merge(album_id, str(target), covered, movie_bytes)
                 # Repoint episode records to the merged movie so future syncs do
                 # not treat the (now-deleted) episodes as missing and re-download.
+                share = movie_bytes // max(1, covered)
                 for ep in episodes:
                     try:
-                        state.mark_episode(album_id, ep.number, str(target), 'done')
+                        state.mark_episode(album_id, ep.number, str(target),
+                                           'done', share)
                     except Exception:
                         pass
             except Exception as exc:
@@ -284,19 +288,27 @@ def repair_merge_counts(state, *, dry_run: bool = False) -> int:
         movie = Path(path)
         want = episode_count_from_name(movie.stem)
         have = int(row.get('merged_episodes') or 0)
-        if want <= 0 or want == have:
+        size_have = int(row.get('size_bytes') or 0)
+        size_want = 0
+        try:
+            size_want = movie.stat().st_size if movie.is_file() else 0
+        except OSError:
+            size_want = 0
+        count_ok = want <= 0 or want == have
+        size_ok = not size_want or size_want == size_have
+        if count_ok and size_ok:
             continue
+        target_count = want if want > 0 else have
         if dry_run:
-            LOG.info('[dry-run] would fix merged_episodes %s: %s -> %s',
-                     row.get('title'), have, want)
+            LOG.info('[dry-run] would fix merge row %s: episodes %s -> %s, size %s -> %s',
+                     row.get('title'), have, target_count, size_have, size_want)
             fixed += 1
             continue
         try:
-            state.mark_merge(row['album_id'], path, want,
-                             int(movie.stat().st_size) if movie.is_file() else 0)
+            state.mark_merge(row['album_id'], path, target_count, size_want)
             fixed += 1
-            LOG.info('fixed merged_episodes for %s: %s -> %s',
-                     row.get('title'), have, want)
+            LOG.info('fixed merge row %s: episodes %s -> %s, size %s -> %s',
+                     row.get('title'), have, target_count, size_have, size_want)
         except Exception as exc:
             LOG.warning('cannot fix merge row %s: %s', row.get('album_id'), exc)
     return fixed
