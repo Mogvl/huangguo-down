@@ -655,6 +655,38 @@ jobs:
           st.close()
           PY
 
+      - name: 验证站点分类名与配置名不一致时不跳过
+        run: |
+          docker exec hgxz-ci python - <<'PY'
+          import pathlib
+          from HGXZ.core import Album
+          from HGXZ.cli import Archiver
+          import HGXZ.cli as C
+          cfg = {'site': {'base_url': 'http://127.0.0.1:1', 'categories': [
+                     {'name': 'AI成人漫剧', 'path': '/ai-manju/', 'library': 'AI成人漫剧'},
+                     {'name': 'AI成人短剧', 'path': '/ai-duanju/', 'library': 'AI成人短剧'}]},
+                 'download': {'root': '/tmp/catci', 'minimum_duration': 1},
+                 'merge': {'enabled': True, 'delete_episodes': True, 'only_when_complete': False},
+                 'state': {'database': '/tmp/catci/s.sqlite3'}, 'log': {'directory': ''}}
+          a = Archiver(cfg)
+          assert a._resolve_category('漫剧')['name'] == 'AI成人漫剧'
+          assert a._resolve_category('短剧')['name'] == 'AI成人短剧'
+          assert a._resolve_category('AI成人漫剧')['name'] == 'AI成人漫剧'
+          assert a._resolve_category('搞笑') is None, '无关分类不应误匹配'
+
+          class FakeClient:
+              def get_text(self, p): return '<html></html>'
+          a.client = FakeClient()
+          C.parse_detail_html = lambda aid, cat, html: Album(aid, '漫剧', '测试漫剧', '', 2025, [], 3, True, None)
+          r = a.sync_album(3144, cfg['site']['categories'][0], metadata_only=True)
+          assert not r.get('skipped'), f'仍被跳过: {r}'
+          row = a.state.album_row(3144)
+          assert row is not None, '专辑未入库'
+          assert row['directory'].startswith('/tmp/catci/AI成人漫剧/'), row['directory']
+          print('OK 站点分类 漫剧 不再被跳过，目录按 library 命名')
+          a.state.close()
+          PY
+
       - name: 验证容器日志无异常
         run: |
           docker logs hgxz-ci 2>&1 | tee /tmp/ci.log
