@@ -548,6 +548,43 @@ class Archiver:
         except OSError as exc:
             LOG.debug('cannot prune %s: %s', album_dir, exc)
 
+    def _resolve_category(self, album_category: str) -> dict | None:
+        """Map the site's category label onto a configured category.
+
+        The configured ``name`` is a local label (and drives logging), while
+        ``library`` decides the folder. On this site the listing category is
+        sometimes shorter than the label we chose, e.g. the site reports 漫剧
+        for a category configured as AI成人漫剧, which used to skip every album
+        in it. Accept an explicit ``site_name``/``aliases`` entry, and as a last
+        resort fall back to a containment match so such near-misses still sync.
+        """
+        label = (album_category or '').strip()
+        if not label:
+            return None
+        categories = self.config['site']['categories']
+        for cat in categories:
+            if cat['name'] == label:
+                return cat
+        for cat in categories:
+            names = [cat.get('site_name') or '', *(cat.get('aliases') or [])]
+            if label in [str(n).strip() for n in names if str(n).strip()]:
+                return cat
+        # No exact name anywhere: pick the configured category whose name is
+        # closest in length to the site label (漫剧 -> AI成人漫剧, 短剧 -> ...).
+        candidates = []
+        for cat in categories:
+            name = (cat['name'] or '').strip()
+            if name and (name in label or label in name):
+                candidates.append((abs(len(name) - len(label)), cat))
+        if candidates:
+            candidates.sort(key=lambda item: item[0])
+            best = candidates[0][1]
+            LOG.info('分类 %r 按包含关系匹配到配置项 %r；'
+                     '建议在该分类下加 "site_name": %r 以免歧义',
+                     label, best['name'], label)
+            return best
+        return None
+
     def _album_dir(self, album, category: dict) -> Path:
         library = sanitize_filename(category['library'])
         row = self.state.album_row(album.id)
@@ -626,8 +663,12 @@ class Archiver:
                    max_episodes: int | None = None,
                    force: bool = False) -> dict:
         html = self.client.get_text(f'/video/{album_id}/')
-        album = parse_detail_html(album_id, category['name'], html)
-        cat_match = next((c for c in self.config['site']['categories'] if c['name'] == album.category), None)
+        # The site's own category label is what ends up in album.category; pass
+        # it as the parse fallback so a missing data-history cat still lands on
+        # the right name instead of the local display name.
+        album = parse_detail_html(
+            album_id, category.get('site_name') or category['name'], html)
+        cat_match = self._resolve_category(album.category)
         if cat_match:
             category = cat_match
         elif album.category != category['name']:

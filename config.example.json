@@ -24,7 +24,9 @@
       {
         "name": "AI成人漫剧",
         "path": "/ai-manju/",
-        "library": "AI成人漫剧"
+        "library": "AI成人漫剧",
+        "site_name": "漫剧",
+        "_comment": "site_name 是站点上该分类的实际名字；name 只作本地标签（library 决定文件夹名）。站点分类名与 name 不同时必须填，否则整类会被跳过"
       }
     ],
     "attempts": 2
